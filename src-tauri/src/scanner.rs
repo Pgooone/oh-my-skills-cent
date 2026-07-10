@@ -293,17 +293,19 @@ fn managed_project_roots_from_history(app_data: &Path) -> Result<Vec<ResolvedRoo
             if !applied.contains(&operation.id) {
                 continue;
             }
+            if !is_project_distribution_operation(&operation.op_type) {
+                continue;
+            }
+            let Some(agent_id) = operation.agent_id.as_deref() else {
+                continue;
+            };
             let Some(target_path) = operation.target_path.as_deref() else {
                 continue;
             };
             let target_path = PathBuf::from(target_path);
-            let matching_definitions = definitions.iter().filter(|definition| {
-                operation
-                    .agent_id
-                    .as_deref()
-                    .map(|agent_id| agent_id == definition.id)
-                    .unwrap_or(true)
-            });
+            let matching_definitions = definitions
+                .iter()
+                .filter(|definition| agent_id == definition.id);
             for definition in matching_definitions {
                 for relative in &definition.project_roots {
                     let Some(root_path) = project_root_from_target_path(&target_path, relative)
@@ -328,6 +330,10 @@ fn managed_project_roots_from_history(app_data: &Path) -> Result<Vec<ResolvedRoo
     }
 
     Ok(dedupe_resolved_roots(roots))
+}
+
+fn is_project_distribution_operation(op_type: &str) -> bool {
+    matches!(op_type, "create-symlink" | "copy-to-target")
 }
 
 fn project_root_from_target_path(target_path: &Path, relative: &str) -> Option<PathBuf> {
@@ -904,18 +910,26 @@ mod tests {
             .join("skipped-project")
             .join(".agents")
             .join("skills");
+        let library_root = temp.path().join(".oh-my-skills").join("skills");
+        let unattributed_root = temp
+            .path()
+            .join("unattributed-project")
+            .join(".agents")
+            .join("skills");
         let plan_id = "batch-sync-test";
 
         fs::create_dir_all(&plans).expect("plans dir");
         fs::create_dir_all(&project_root).expect("project root");
         fs::create_dir_all(&skipped_root).expect("skipped root");
+        fs::create_dir_all(&library_root).expect("library root");
+        fs::create_dir_all(&unattributed_root).expect("unattributed root");
         fs::write(
             app_data.join("sync-history.json"),
             serde_json::json!([{
                 "planId": plan_id,
                 "kind": "batch-sync",
                 "appliedAt": "2026-06-30T00:00:00Z",
-                "appliedOperations": ["applied-op"],
+                "appliedOperations": ["applied-op", "library-import-op", "unattributed-op"],
                 "errors": []
             }])
             .to_string(),
@@ -950,6 +964,32 @@ mod tests {
                     backup_path: None,
                     message: "Preview-only operation".to_string(),
                     agent_id: Some("amp".to_string()),
+                    skill_id: Some("blog-translator".to_string()),
+                },
+                SyncOperation {
+                    id: "library-import-op".to_string(),
+                    op_type: "copy-to-library".to_string(),
+                    status: "planned".to_string(),
+                    source_path: Some(path_to_string(
+                        &temp.path().join("source").join("agent-development"),
+                    )),
+                    target_path: Some(path_to_string(&library_root.join("agent-development"))),
+                    backup_path: None,
+                    message: "Import agent-development into the central library".to_string(),
+                    agent_id: None,
+                    skill_id: Some("agent-development".to_string()),
+                },
+                SyncOperation {
+                    id: "unattributed-op".to_string(),
+                    op_type: "create-symlink".to_string(),
+                    status: "planned".to_string(),
+                    source_path: Some(path_to_string(
+                        &temp.path().join("library").join("blog-translator"),
+                    )),
+                    target_path: Some(path_to_string(&unattributed_root.join("blog-translator"))),
+                    backup_path: None,
+                    message: "Operation without agent id".to_string(),
+                    agent_id: None,
                     skill_id: Some("blog-translator".to_string()),
                 },
             ],

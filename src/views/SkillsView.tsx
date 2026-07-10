@@ -3,7 +3,6 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, FolderPlus, 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { AgentEmptyVisual, ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { AgentBadge, AgentIcon, Coverage, IssueList, SkillState } from "../components/shared";
-import { demoAgent } from "../lib/demoData";
 import { isTauriRuntime } from "../lib/runtime";
 import { agentSkillCount, centralLibraryReferenceSummary, compactPath, isCentralLibraryReference, projectName, projectStats, samePath, skillListStatus, skillSourceSummary } from "../lib/skillUtils";
 import type { AgentRecord, ProjectWorkspaceCandidate, Settings as AppSettings, SkillLockEntry, SkillRecord, SkillUpdateCheck } from "../types";
@@ -660,14 +659,12 @@ function SourceOwnerTag({ skill, skillLocks }: { skill: SkillRecord; skillLocks:
 }
 
 function SkillAgentStack({ skill, agents }: { skill: SkillRecord; agents: AgentRecord[] }) {
+  const installedAgentById = new Map(agents.map((agent) => [agent.id, agent]));
   const uniqueAgents = Array.from(
     new Map(skill.installations.map((installation) => {
-      const agent = agents.find((item) => item.id === installation.agentId);
-      return [
-        installation.agentId,
-        agent ?? demoAgent(installation.agentId, installation.agentLabel, installation.status, 0, [])
-      ] as const;
-    })).values()
+      const agent = installedAgentById.get(installation.agentId);
+      return agent ? [installation.agentId, agent] as const : null;
+    }).filter((item): item is readonly [string, AgentRecord] => Boolean(item))).values()
   );
   const knownAgents = uniqueAgents.slice(0, 5);
   const extra = Math.max(0, uniqueAgents.length - knownAgents.length);
