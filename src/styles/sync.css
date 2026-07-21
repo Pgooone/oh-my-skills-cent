@@ -279,17 +279,36 @@
 
 .sync-form-pane {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 318px;
+  align-content: start;
+  align-items: start;
+  gap: 16px;
+  min-height: 560px;
+  padding: 16px;
+  border: 1px solid rgba(24, 26, 29, 0.10);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.sync-form-sections {
+  display: grid;
+  min-width: 0;
   align-content: start;
   gap: 16px;
 }
 
 .sync-confirm-pane {
+  position: sticky;
+  top: 0;
   display: grid;
   align-content: start;
-  gap: 8px;
-  padding: 2px 0 0;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(24, 26, 29, 0.10);
+  border-radius: 12px;
   overflow: visible;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .sync-confirm-pane .pane-title {
@@ -399,13 +418,13 @@
 }
 
 .option-grid.two {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
 }
 
 .choice-card {
-  width: 312px;
+  width: 100%;
   height: 56px;
   justify-content: flex-start;
   padding: 8px 10px;
@@ -463,17 +482,17 @@
 }
 
 .selected-target-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   min-height: 28px;
   align-items: flex-start;
 }
 
 .selected-target-card {
-  width: max-content;
-  max-width: 196px;
-  min-width: 124px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
   height: 52px;
   justify-content: flex-start;
   padding: 8px 10px;
@@ -499,7 +518,7 @@
 
 .target-card-main {
   flex: 1;
-  max-width: 96px;
+  max-width: none;
 }
 
 .target-card-check {
@@ -563,6 +582,7 @@
 
 .target-helper {
   display: flex;
+  grid-column: 1 / -1;
   align-items: center;
   min-height: 24px;
   padding: 2px 0;
@@ -597,6 +617,11 @@
   line-height: 1.4;
 }
 
+.confirm-summary svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .confirm-summary strong {
   flex: 1;
 }
@@ -619,10 +644,126 @@
   color: #9d2d24;
 }
 
+.preview-pane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preview-pane-head h1 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.preview-pane-head p {
+  margin: 3px 0 0;
+  color: rgba(23, 25, 28, 0.54);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.preview-state {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(24, 26, 29, 0.06);
+  color: rgba(23, 25, 28, 0.58);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.preview-state.blocked {
+  background: rgba(190, 62, 49, 0.10);
+  color: #9d2d24;
+}
+
+.preview-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid rgba(24, 26, 29, 0.08);
+  border-radius: 999px;
+  background: rgba(24, 26, 29, 0.04);
+}
+
+.preview-tab,
+.preview-tabs-row .plan-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(23, 25, 28, 0.58);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.preview-tab.active,
+.preview-tabs-row .plan-info-button:hover,
+.preview-tabs-row .plan-info-wrap:focus-within .plan-info-button {
+  background: #fff;
+  color: var(--app-text);
+  box-shadow: 0 1px 2px rgba(22, 24, 26, 0.06);
+}
+
+.preview-tab.muted {
+  color: rgba(23, 25, 28, 0.42);
+}
+
+.preview-tabs-row .plan-info-button {
+  cursor: help;
+}
+
+.preview-tabs-row .plan-info-button span {
+  min-width: 0;
+}
+
+.preview-summary-list {
+  display: grid;
+}
+
+.preview-summary-list div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(24, 26, 29, 0.08);
+}
+
+.preview-summary-list b {
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.preview-summary-list span {
+  min-width: 0;
+  overflow: hidden;
+  color: #227157;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 /* Destination preview in sync confirm pane - makes "what happens where" obvious */
 .destinations-preview {
-  margin: 8px 0 4px;
+  margin: 0;
   padding: 8px 10px;
   background: rgba(24, 26, 29, 0.035);
   border-radius: 8px;
@@ -712,7 +853,7 @@
   --sync-action-inset: 18px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   margin-top: 14px;
   padding: var(--sync-action-inset) 12px var(--sync-action-inset);
@@ -799,6 +940,24 @@
 .plan-info-button:hover {
   color: var(--app-text);
   background: rgba(255, 255, 255, 0.92);
+}
+
+.preview-tabs-row .plan-info-button {
+  width: auto;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.preview-tabs-row .plan-info-button:hover,
+.preview-tabs-row .plan-info-wrap:focus-within .plan-info-button {
+  background: #fff;
+  color: var(--app-text);
+  box-shadow: 0 1px 2px rgba(22, 24, 26, 0.06);
 }
 
 .plan-detail-panel {

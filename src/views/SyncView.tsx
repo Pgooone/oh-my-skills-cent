@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Copy, CopyCheck, FolderPlus, Globe2, Info, Link2, Plus, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Copy, CopyCheck, FolderPlus, Globe2, Info, Link2, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AgentIcon } from "../components/shared";
 import { agentSignalSummary, compactPath, firstValidInstallation, syncPlanSummary } from "../lib/skillUtils";
@@ -42,7 +42,7 @@ export function SyncView({
   const [targetScope, setTargetScope] = useState<"global" | "project">("global");
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
-  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(() => new Set(agents.slice(0, 3).map((agent) => agent.id)));
+  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(() => new Set(agents.slice(0, 4).map((agent) => agent.id)));
   const [selectedReplacementKeys, setSelectedReplacementKeys] = useState<Set<string>>(() => new Set());
   const [selectedSkillScrollState, setSelectedSkillScrollState] = useState({ left: false, right: false });
   const [previewDraftKey, setPreviewDraftKey] = useState<string | null>(null);
@@ -56,7 +56,7 @@ export function SyncView({
       const validIds = new Set(agents.map((agent) => agent.id));
       const next = new Set([...current].filter((id) => validIds.has(id)));
       if (next.size > 0) return next;
-      return new Set(agents.slice(0, 3).map((agent) => agent.id));
+      return new Set(agents.slice(0, 4).map((agent) => agent.id));
     });
   }, [agents]);
 
@@ -149,6 +149,42 @@ export function SyncView({
         syncMode
       )
     : null;
+  const previewOperationText = bottomPreviewText ?? confirmationText;
+  const previewDetailCount = activePlan?.operations.length ?? selectedSkillCount * selectedTargets.length;
+  const previewStateLabel = applyResult
+    ? applyResult.errors.length > 0
+      ? "有错误"
+      : "已执行"
+    : blocked
+    ? "有阻塞"
+    : "未写入";
+  const previewStatusTitle = applyResult
+    ? applyResult.errors.length > 0
+      ? "执行完成，但有错误"
+      : "执行完成"
+    : blocked
+    ? "存在冲突，无法执行"
+    : activePlan
+    ? "无覆盖、无阻塞"
+    : "等待生成预览";
+  const previewStatusBody = applyResult
+    ? applyResult.errors.length > 0
+      ? `失败 ${applyResult.errors.length} 项，请查看错误信息。`
+      : `${applyResult.appliedOperations.length} 项已执行，${applyResult.skippedOperations.length} 项已跳过。`
+    : blocked
+    ? "本次不会写入，请先处理详情中的问题。"
+    : activePlan
+    ? "执行前仍可查看每一项写入路径。"
+    : "预览前不会写入。";
+  const previewTargetsText = selectedTargets.length > 0
+    ? selectedTargets.map((agent) => agent.label).join("、")
+    : "未选择";
+  const previewScopeText = targetScope === "project"
+    ? selectedProjectPath
+      ? `${projectDisplayName(selectedProjectPath)} 项目 Skills 目录`
+      : "未选择项目"
+    : "全局 Skills 目录";
+  const destinationPreviewTargets = selectedTargets.slice(0, 4);
 
   function toggleTarget(agentId: string) {
     setSelectedTargetIds((current) => {
@@ -254,6 +290,7 @@ export function SyncView({
 
         <div className="sync-work-grid">
           <section className="sync-form-pane">
+            <div className="sync-form-sections">
             <SyncSection
               number="1"
               title="已选 Skill"
@@ -419,51 +456,93 @@ export function SyncView({
                 </div>
               )}
             </SyncSection>
-            <aside className="sync-confirm-pane">
-            <div className="pane-title">
-              <div>
-                <h1>执行前确认</h1>
-                <p>预览前不会写入任何内容。</p>
-              </div>
-              <ShieldCheck size={24} />
             </div>
 
-            {blocked && activePlan && (
-              <div className="banner warning">
-                <AlertTriangle size={17} />
-                <span>{activePlan.blockedConflicts.join(" · ")}</span>
+            <aside className="sync-confirm-pane">
+              <div className="preview-pane-head">
+                <div>
+                  <h1>操作预览</h1>
+                  <p>生成预览前不会写入。</p>
+                </div>
+                <span className={`preview-state ${applyResult?.errors.length || blocked ? "blocked" : ""}`}>
+                  {previewStateLabel}
+                </span>
               </div>
-            )}
 
+              <div className="preview-tabs-row">
+                <span className="preview-tab active">摘要</span>
+                {planDetails ? (
+                  <PlanInfoDisclosure
+                    details={planDetails}
+                    onIncludeReplacement={includeReplacement}
+                    busy={busy}
+                    label={`${previewDetailCount} 项详情`}
+                  />
+                ) : (
+                  <span className="preview-tab muted">{previewDetailCount} 项详情</span>
+                )}
+              </div>
+
+              <div className={`confirm-summary ${applyResult?.errors.length || blocked ? "blocked" : ""}`}>
+                {applyResult?.errors.length || blocked ? <AlertTriangle size={18} /> : <Check size={18} />}
+                <span className="summary-body">
+                  <strong>{previewStatusTitle}</strong>
+                  <span className="summary-sub">{previewStatusBody}</span>
+                </span>
+              </div>
+
+              {blocked && activePlan && (
+                <div className="banner warning">
+                  <AlertTriangle size={17} />
+                  <span>{activePlan.blockedConflicts.join(" · ")}</span>
+                </div>
+              )}
+
+              <div className="preview-summary-list">
+                <div>
+                  <b>将执行</b>
+                  <span>{previewOperationText}</span>
+                </div>
+                <div>
+                  <b>目标</b>
+                  <span>{previewTargetsText}</span>
+                </div>
+                <div>
+                  <b>范围</b>
+                  <span>{previewScopeText}</span>
+                </div>
+              </div>
+
+              {destinationPreviewTargets.length > 0 && (
+                <div className="destinations-preview">
+                  <div className="dest-label">目标位置</div>
+                  <div className="dest-list">
+                    {destinationPreviewTargets.map((agent) => {
+                      const targetPath = targetPathPreview(agent, targetScope, selectedProjectPath);
+                      return (
+                        <div className="dest-item" key={agent.id}>
+                          <AgentIcon agent={agent} />
+                          <span className="dest-text">
+                            <strong className="dest-agent">{agent.label}</strong>
+                            <code className="dest-path" title={targetPath ?? ""}>
+                              {targetPath ? compactPath(targetPath) : "等待选择路径"}
+                            </code>
+                          </span>
+                          <span className="dest-action">{syncMethodLabel(syncMode, quickMethod)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {selectedTargets.length > destinationPreviewTargets.length && (
+                    <div className="dest-hint">还有 {selectedTargets.length - destinationPreviewTargets.length} 个目标会在详情中展开。</div>
+                  )}
+                </div>
+              )}
             </aside>
           </section>
         </div>
 
         <div className="sync-action-bar">
-          {applyResult ? (
-            <div className={`apply-result ${applyResult.errors.length ? "error" : "success"}`} role="status">
-              <span>
-                {applyResult.errors.length ? "执行完成，但有错误" : "执行完成"} · {activePlan && summary ? applyResultSummary(activePlan, summary, selectedSkillCount, applyResult) : `${applyResult.appliedOperations.length} 已执行 · ${applyResult.skippedOperations.length} 已跳过`}
-              </span>
-              {applyResult.errors.map((item) => <code key={item}>{item}</code>)}
-            </div>
-          ) : activePlan ? (
-            <div className="plan-status-wrap">
-              <div className={`plan-status-pill ${blocked ? "blocked" : ""}`}>
-                {blocked ? <AlertTriangle size={14} /> : <Check size={14} />}
-                <span>{confirmationText}</span>
-              </div>
-              {planDetails && (
-                <PlanInfoDisclosure details={planDetails} onIncludeReplacement={includeReplacement} busy={busy} />
-              )}
-            </div>
-          ) : bottomPreviewText ? (
-            <div className="action-preview">
-              <span className="preview-label">操作预览</span>
-              <span className="preview-sep"> · </span>
-              {bottomPreviewText}
-            </div>
-          ) : null}
           <div className="action-buttons-end">
             {generatedPlan ? (
               <div className="button-pair">
@@ -491,11 +570,13 @@ export function SyncView({
 function PlanInfoDisclosure({
   details,
   onIncludeReplacement,
-  busy
+  busy,
+  label
 }: {
   details: PlanDetail[];
   onIncludeReplacement: (operation: SyncOperation) => void;
   busy: boolean;
+  label?: string;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>();
@@ -530,6 +611,7 @@ function PlanInfoDisclosure({
     <div className="plan-info-wrap" onPointerEnter={updatePanelPosition} onFocusCapture={updatePanelPosition}>
       <button ref={buttonRef} className="plan-info-button" type="button" aria-label="查看同步明细">
         <Info size={14} />
+        {label && <span>{label}</span>}
       </button>
       <PlanDetailPanel details={details} onIncludeReplacement={onIncludeReplacement} busy={busy} style={panelStyle} />
     </div>
@@ -609,23 +691,6 @@ function planSummarySentence(plan: SyncPlan, summary: ReturnType<typeof syncPlan
     return `${prefix}将${actionParts.join("，")}`;
   }
   return `${prefix}${stateParts.join("，") || "无需变更"}`;
-}
-
-function applyResultSummary(
-  plan: SyncPlan,
-  summary: ReturnType<typeof syncPlanSummary>,
-  skillCount: number,
-  applyResult: ApplyResult
-) {
-  if (applyResult.errors.length > 0) {
-    return `失败 ${applyResult.errors.length} 项，已停止后续操作`;
-  }
-  const preview = planSummarySentence(plan, summary, skillCount);
-  return preview.startsWith(`${skillCount} 个 Skills：将`)
-    ? preview.replace(`${skillCount} 个 Skills：将`, `${skillCount} 个 Skills：已`)
-    : preview.startsWith("将")
-    ? preview.replace("将", "已")
-    : preview;
 }
 
 function summaryParts(summary: ReturnType<typeof syncPlanSummary>) {
@@ -879,4 +944,9 @@ function getOperationPreview(
   return isGenerated
     ? `复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`
     : `将复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`;
+}
+
+function syncMethodLabel(syncMode: SyncMode, quickMethod: QuickMigrationMethod) {
+  if (syncMode === "managed") return "软链接";
+  return quickMethod === "copy" ? "复制" : "软链接";
 }
