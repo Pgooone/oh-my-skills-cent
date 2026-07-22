@@ -41,12 +41,11 @@ export function SyncView({
   const [quickMethod, setQuickMethod] = useState<QuickMigrationMethod>("copy");
   const [targetScope, setTargetScope] = useState<"global" | "project">("global");
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
-  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
-  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(() => new Set(agents.slice(0, 4).map((agent) => agent.id)));
+  // No default selection — user must pick targets intentionally.
+  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(() => new Set());
   const [selectedReplacementKeys, setSelectedReplacementKeys] = useState<Set<string>>(() => new Set());
   const [selectedSkillScrollState, setSelectedSkillScrollState] = useState({ left: false, right: false });
   const [previewDraftKey, setPreviewDraftKey] = useState<string | null>(null);
-  const targetMenuRef = useRef<HTMLDivElement>(null);
   const selectedSkillBarRef = useRef<HTMLDivElement>(null);
   const selectedSkill = queuedSkills[0] ?? null;
   const selectedSkillCount = queuedSkills.length;
@@ -54,29 +53,9 @@ export function SyncView({
   useEffect(() => {
     setSelectedTargetIds((current) => {
       const validIds = new Set(agents.map((agent) => agent.id));
-      const next = new Set([...current].filter((id) => validIds.has(id)));
-      if (next.size > 0) return next;
-      return new Set(agents.slice(0, 4).map((agent) => agent.id));
+      return new Set([...current].filter((id) => validIds.has(id)));
     });
   }, [agents]);
-
-  useEffect(() => {
-    if (!targetPickerOpen) return undefined;
-    const onDocClick = (e: MouseEvent) => {
-      if (targetMenuRef.current && !targetMenuRef.current.contains(e.target as Node)) {
-        setTargetPickerOpen(false);
-      }
-    };
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setTargetPickerOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onEsc);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onEsc);
-    };
-  }, [targetPickerOpen]);
 
   const updateSelectedSkillScrollState = () => {
     const element = selectedSkillBarRef.current;
@@ -102,7 +81,6 @@ export function SyncView({
   }, []);
 
   const selectedTargets = agents.filter((agent) => selectedTargetIds.has(agent.id));
-  const availableTargets = agents.filter((agent) => !selectedTargetIds.has(agent.id));
   const targets = selectedTargets.map((agent) => ({
     agentId: agent.id,
     scope: targetScope,
@@ -156,11 +134,6 @@ export function SyncView({
       else next.add(agentId);
       return next;
     });
-  }
-
-  function addTarget(agentId: string) {
-    setSelectedTargetIds((current) => new Set(current).add(agentId));
-    setTargetPickerOpen(false);
   }
 
   async function chooseProjectScope() {
@@ -343,44 +316,31 @@ export function SyncView({
               </SyncSection>
             )}
 
-            <SyncSection
-              number="3"
-              title="目标 Agent（可多选）"
-              action={(
-                <div className="target-add-wrap title-add" ref={targetMenuRef}>
-                  <button className="sync-section-icon-action" onClick={() => setTargetPickerOpen((open) => !open)} title="添加目标 Agent" type="button">
-                    <Plus size={16} />
-                  </button>
-                  {targetPickerOpen && (
-                    <div className="target-add-menu" role="menu">
-                      {availableTargets.map((agent) => (
-                        <button key={agent.id} onClick={() => addTarget(agent.id)} type="button">
-                          <AgentIcon agent={agent} />
-                          <strong>{agent.label}</strong>
-                        </button>
-                      ))}
-                      {availableTargets.length === 0 && <span className="target-empty">所有 Agent 已添加</span>}
-                    </div>
-                  )}
-                </div>
-              )}
-            >
+            <SyncSection number="3" title="目标 Agent" titleHint="（可多选）">
               <div className="selected-target-row">
-                {selectedTargets.length === 0 ? (
-                  <span className="target-helper">请添加至少 1 个目标 Agent。</span>
+                {agents.length === 0 ? (
+                  <span className="target-helper">未检测到已安装的 Agent。</span>
                 ) : (
-                  selectedTargets.map((agent) => {
+                  agents.map((agent) => {
+                    const selected = selectedTargetIds.has(agent.id);
                     const pathPreview = targetPathPreview(agent, targetScope, selectedProjectPath);
                     const signal = agentSignalSummary(agent) || "Agent";
                     return (
-                      <button className="selected-target-card active" key={agent.id} onClick={() => toggleTarget(agent.id)} title={pathPreview ? compactPath(pathPreview) : "移除目标"} type="button">
+                      <button
+                        aria-pressed={selected}
+                        className={`selected-target-card ${selected ? "active" : ""}`}
+                        key={agent.id}
+                        onClick={() => toggleTarget(agent.id)}
+                        title={pathPreview ? compactPath(pathPreview) : selected ? "取消选择" : "选择目标"}
+                        type="button"
+                      >
                         <AgentIcon agent={agent} />
                         <span className="target-card-main">
                           <strong>{agent.label}</strong>
                           <small>{signal}</small>
                         </span>
-                        <span className="target-card-check" aria-hidden="true">
-                          <Check size={14} />
+                        <span className={`target-card-check ${selected ? "" : "idle"}`} aria-hidden="true">
+                          {selected ? <Check size={14} /> : null}
                         </span>
                       </button>
                     );
@@ -556,13 +516,26 @@ function PlanInfoDisclosure({
   );
 }
 
-function SyncSection({ number, title, action, children }: { number?: string; title: string; action?: ReactNode; children: ReactNode }) {
+function SyncSection({
+  number,
+  title,
+  titleHint,
+  action,
+  children
+}: {
+  number?: string;
+  title: string;
+  titleHint?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="sync-section">
       <div className="sync-section-title">
         <div>
           {number && <span className="sync-section-number">{number}</span>}
           <strong>{title}</strong>
+          {titleHint ? <span className="sync-section-title-hint">{titleHint}</span> : null}
           {action}
         </div>
       </div>

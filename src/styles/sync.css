@@ -329,6 +329,14 @@
   min-width: 0;
 }
 
+.sync-section-title-hint {
+  color: rgba(23, 25, 28, 0.48);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .sync-section-number {
   display: inline-grid;
   width: 20px;
@@ -463,7 +471,8 @@
 
 .selected-target-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  /* Wide enough for "Claude Code" without ellipsis; other cards share this floor */
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
   gap: 8px;
   /* Match selected target card height so empty/filled doesn't jump */
   min-height: 52px;
@@ -479,6 +488,10 @@
   padding: 8px 10px;
   text-align: left;
   cursor: pointer;
+}
+
+.selected-target-card:not(.active) {
+  opacity: 0.92;
 }
 
 .selected-target-card .agent-icon,
@@ -511,6 +524,12 @@
   border-radius: 5px;
   background: #2f6fed;
   color: #fff;
+}
+
+.target-card-check.idle {
+  background: transparent;
+  border: 1px solid rgba(24, 26, 29, 0.16);
+  color: transparent;
 }
 
 .target-add-wrap {
