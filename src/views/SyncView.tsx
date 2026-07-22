@@ -121,7 +121,7 @@ export function SyncView({
     ? "先选择 Skill 再生成预览"
     : missingProject
     ? "先选择项目"
-    : `生成 ${selectedSkillCount} 个同步预览`;
+    : "生成同步预览";
   const centralPath = selectedSkillCount === 1 && selectedSkill ? `${settings.libraryPath}/${selectedSkill.slug}` : settings.libraryPath;
   const confirmationText = activePlan
     ? planSummarySentence(activePlan, summary, selectedSkillCount)

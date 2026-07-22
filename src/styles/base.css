@@ -193,6 +193,14 @@ p {
   font-weight: 750;
 }
 
+/* Bottom action bars: pill buttons without heavy weight */
+.selection-action-bar .primary-button,
+.selection-action-bar .secondary-button,
+.sync-action-bar .primary-button,
+.sync-action-bar .secondary-button {
+  font-weight: 500;
+}
+
 .secondary-button.selected {
   background: rgba(206, 132, 39, 0.14);
   color: #8a4b00;

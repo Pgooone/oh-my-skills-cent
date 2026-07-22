@@ -443,16 +443,17 @@ export function SkillsView({
               ))}
               {extraSelectedCount > 0 && <span className="selection-extra">+{extraSelectedCount}</span>}
             </div>
+            <span className="selection-count">{selectedCount} 个 Skill</span>
             <button className="selection-clear" onClick={onClearSelection} type="button">
               取消全选
             </button>
           </div>
           <div className="selection-actions button-pair">
             <button className="secondary-button large" onClick={onAdoptSelected} type="button">
-              {isLibraryWorkspace ? "从中心库同步" : "导入中心库"} {selectedCount} 个
+              {isLibraryWorkspace ? "从中心库同步" : "导入中心库"}
             </button>
             <button className="primary-button large" onClick={onQuickSyncSelected} type="button">
-              快速同步 {selectedCount} 个
+              快速同步
             </button>
           </div>
         </div>
