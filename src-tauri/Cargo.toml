@@ -1,6 +1,6 @@
 [package]
 name = "oh-my-skills"
-version = "0.1.2"
+version = "0.1.3"
 description = "Desktop workbench for local Agent Skills"
 authors = ["Oh My Skills"]
 edition = "2021"
