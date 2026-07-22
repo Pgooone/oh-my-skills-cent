@@ -1,14 +1,15 @@
-import { Check, X } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Check, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AgentIcon, StatusPill } from "./shared";
-import { agentSignalSummary, agentSkillCount, compactPath } from "../lib/skillUtils";
+import { isTauriRuntime } from "../lib/runtime";
+import { agentSignalSummary, compactPath } from "../lib/skillUtils";
 import type { AgentRecord, InventorySnapshot, Settings as AppSettings, SkillRecord } from "../types";
 
 export function SettingsSheet({
   settings,
   inventory,
   agents = [],
-  skills = [],
   onChange,
   onClose,
   onSave
@@ -22,10 +23,8 @@ export function SettingsSheet({
   onSave: () => void;
 }) {
   const [settingsTab, setSettingsTab] = useState<"data" | "agents">("data");
-
-  const installedCount = agents.length;
-  const skillsForCount = skills.length ? skills : (inventory?.skills ?? []);
   const appDataPath = inventory?.appDataPath || "";
+  const customRoots = settings.customRoots ?? [];
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
@@ -34,6 +33,53 @@ export function SettingsSheet({
     document.addEventListener("keydown", onEsc);
     return () => document.removeEventListener("keydown", onEsc);
   }, [onClose]);
+
+  async function addCustomRoot() {
+    if (!isTauriRuntime()) {
+      const path = window.prompt("演示模式：输入要扫描的 Skills 路径");
+      if (!path?.trim()) return;
+      pushCustomRoot(path.trim());
+      return;
+    }
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "选择要扫描的 Skills 路径"
+    });
+    if (typeof selected !== "string" || !selected.trim()) return;
+    pushCustomRoot(selected.trim());
+  }
+
+  function pushCustomRoot(path: string) {
+    const exists = customRoots.some((root) => root.path === path);
+    if (exists) return;
+    const label = path.split(/[/\\]/).filter(Boolean).pop() || "自定义路径";
+    onChange({
+      ...settings,
+      customRoots: [
+        ...customRoots,
+        {
+          id: crypto.randomUUID(),
+          label,
+          path
+        }
+      ]
+    });
+  }
+
+  function removeCustomRoot(id: string) {
+    onChange({
+      ...settings,
+      customRoots: customRoots.filter((root) => root.id !== id)
+    });
+  }
+
+  function updateCustomRootLabel(id: string, label: string) {
+    onChange({
+      ...settings,
+      customRoots: customRoots.map((root) => (root.id === id ? { ...root, label } : root))
+    });
+  }
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -113,52 +159,94 @@ export function SettingsSheet({
 
           {settingsTab === "agents" && (
             <div className="settings-agents-pane">
-              {installedCount > 0 ? (
-                <div className="settings-list settings-agent-list" role="list">
-                  {agents.map((agent) => {
-                    const count = agentSkillCount(agent.id, skillsForCount);
-                    const signal = agentSignalSummary(agent);
-                    return (
-                      <div className="settings-row settings-agent-row" key={agent.id} role="listitem">
-                        <div className="settings-agent-identity">
-                          <AgentIcon agent={agent} />
-                          <div className="settings-row-copy">
-                            <strong>{agent.label}</strong>
-                            <span>{signal || "未检测到 CLI / App / 插件信号"}</span>
-                          </div>
-                        </div>
-                        <div className="settings-agent-meta">
-                          <span className="settings-agent-count">
-                            <strong>{count}</strong>
-                            <small>Skills</small>
-                          </span>
-                          <StatusPill status={agent.status} />
-                        </div>
-                      </div>
-                    );
-                  })}
+              <section className="settings-block">
+                <div className="settings-block-heading">
+                  <h2>内置支持的 Agent</h2>
+                  <p>Oh My Skills 默认识别的工具；安装状态来自本机扫描。</p>
                 </div>
-              ) : (
-                <div className="settings-agent-empty">暂未发现本地有可用 Agent</div>
-              )}
-              <p className="settings-agent-hint">已发现 {installedCount} 个已安装 Agent。</p>
+                {agents.length > 0 ? (
+                  <div className="settings-list settings-agent-list" role="list">
+                    {agents.map((agent) => {
+                      const signal = agentSignalSummary(agent);
+                      return (
+                        <div className="settings-row settings-agent-row" key={agent.id} role="listitem">
+                          <div className="settings-agent-identity">
+                            <AgentIcon agent={agent} />
+                            <div className="settings-row-copy">
+                              <strong>{agent.label}</strong>
+                              <span>
+                                {agent.installed
+                                  ? signal || "已安装"
+                                  : "未检测到安装"}
+                              </span>
+                            </div>
+                          </div>
+                          <StatusPill status={agent.installed ? "installed" : "not-installed"} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="settings-agent-empty">尚未扫描到 Agent 列表，请先返回主界面重新扫描。</div>
+                )}
+              </section>
+
+              <section className="settings-block">
+                <div className="settings-block-heading settings-block-heading-row">
+                  <div>
+                    <h2>自定义扫描路径</h2>
+                    <p>添加额外的 Skills 根目录，用于扫描未内置的 Agent 或自定义位置。</p>
+                  </div>
+                  <button className="settings-text-button" onClick={() => void addCustomRoot()} type="button">
+                    <Plus size={14} />
+                    添加路径
+                  </button>
+                </div>
+
+                {customRoots.length > 0 ? (
+                  <div className="settings-list" role="list">
+                    {customRoots.map((root) => (
+                      <div className="settings-row settings-custom-root-row" key={root.id} role="listitem">
+                        <div className="settings-custom-root-fields">
+                          <input
+                            className="settings-label-input"
+                            value={root.label}
+                            onChange={(event) => updateCustomRootLabel(root.id, event.target.value)}
+                            placeholder="显示名称"
+                            spellCheck={false}
+                          />
+                          <code className="settings-custom-root-path" title={root.path}>
+                            {compactPath(root.path)}
+                          </code>
+                        </div>
+                        <button
+                          className="meta-icon-button danger"
+                          onClick={() => removeCustomRoot(root.id)}
+                          title="移除此路径"
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="settings-agent-empty settings-custom-empty">
+                    还没有自定义路径。添加后会在下次扫描时纳入。
+                  </div>
+                )}
+              </section>
             </div>
           )}
         </div>
 
-        {settingsTab === "data" ? (
-          <footer className="sheet-actions">
-            <button className="secondary-button" onClick={onClose} type="button">取消</button>
-            <button className="primary-button" onClick={onSave} type="button">
-              <Check size={16} />
-              保存
-            </button>
-          </footer>
-        ) : (
-          <footer className="sheet-actions sheet-actions-single">
-            <button className="primary-button" onClick={onClose} type="button">关闭</button>
-          </footer>
-        )}
+        <footer className="sheet-actions">
+          <button className="secondary-button" onClick={onClose} type="button">取消</button>
+          <button className="primary-button" onClick={onSave} type="button">
+            <Check size={16} />
+            保存
+          </button>
+        </footer>
       </aside>
     </div>
   );

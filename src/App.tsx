@@ -826,8 +826,7 @@ export default function App() {
         <SettingsSheet
           settings={draftSettings}
           inventory={inventory}
-          agents={installedAgents}
-          skills={allSkills}
+          agents={agents}
           onChange={setDraftSettings}
           onClose={() => {
             setDraftSettings(settings);

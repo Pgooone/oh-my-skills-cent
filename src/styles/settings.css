@@ -10,11 +10,13 @@
   backdrop-filter: blur(14px) saturate(120%);
 }
 
-/* Keep main-window light surface language; structure mirrors reference list settings. */
+/* Keep main-window light surface language; structure mirrors reference list settings.
+   Fixed height so switching 数据 / Agent tabs does not resize the dialog. */
 .settings-sheet {
   display: grid;
   width: min(560px, calc(100vw - 56px));
-  max-height: min(720px, calc(100vh - 56px));
+  height: min(640px, calc(100vh - 56px));
+  max-height: min(640px, calc(100vh - 56px));
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 0;
   overflow: hidden;
@@ -227,7 +229,62 @@
 
 .settings-agents-pane {
   display: grid;
-  gap: 10px;
+  gap: 16px;
+  align-content: start;
+}
+
+.settings-block {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-block-heading {
+  display: grid;
+  gap: 3px;
+  padding: 0 8px;
+}
+
+.settings-block-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-block-heading h2 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-block-heading p {
+  margin: 0;
+  color: rgba(23, 25, 28, 0.52);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-text-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-text-button:hover {
+  background: rgba(24, 26, 29, 0.06);
 }
 
 .settings-agent-list {
@@ -246,32 +303,48 @@
   flex: 1;
 }
 
-.settings-agent-meta {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
+.settings-custom-root-row {
   gap: 10px;
 }
 
-.settings-agent-count {
+.settings-custom-root-fields {
   display: grid;
-  justify-items: end;
-  gap: 0;
-  line-height: 1.15;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
 }
 
-.settings-agent-count strong {
-  font-size: 14px;
-  font-weight: 700;
+.settings-label-input {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: 0;
+  background: rgba(24, 26, 29, 0.04);
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.settings-agent-count small {
-  color: rgba(23, 25, 28, 0.48);
-  font-size: 10px;
+.settings-label-input:focus {
+  border-color: rgba(24, 26, 29, 0.16);
+  background: #fff;
+}
+
+.settings-custom-root-path {
+  display: block;
+  overflow: hidden;
+  padding: 0 8px;
+  color: rgba(23, 25, 28, 0.52);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-agent-empty {
-  padding: 52px 20px;
+  padding: 28px 16px;
   border: 1px solid rgba(24, 26, 29, 0.08);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.55);
@@ -281,12 +354,9 @@
   font-weight: 500;
 }
 
-.settings-agent-hint {
-  margin: 0;
-  padding: 0 8px 2px;
-  color: var(--app-muted);
+.settings-custom-empty {
+  padding: 20px 16px;
   font-size: 12px;
-  text-align: center;
 }
 
 .sheet-actions {
@@ -296,10 +366,6 @@
   padding: 12px 16px 16px;
   border-top: 1px solid rgba(24, 26, 29, 0.08);
   background: rgba(250, 251, 252, 0.72);
-}
-
-.sheet-actions-single {
-  justify-content: flex-end;
 }
 
 /* Legacy helpers kept if referenced elsewhere */
