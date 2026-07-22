@@ -136,7 +136,6 @@ export function SyncView({
     ? planSummarySentence(activePlan, summary, selectedSkillCount)
     : draftPlanSentence(syncMode, quickMethod, selectedSkillCount, selectedTargets.length, targetScope, selectedProjectPath);
   const planDetails = activePlan ? buildPlanDetails(activePlan, agents) : null;
-
   const canShowBottomPreview =
     selectedSkillCount > 0 && selectedTargets.length > 0 && !missingProject;
   const bottomPreviewText = canShowBottomPreview
@@ -149,42 +148,6 @@ export function SyncView({
         syncMode
       )
     : null;
-  const previewOperationText = bottomPreviewText ?? confirmationText;
-  const previewDetailCount = activePlan?.operations.length ?? selectedSkillCount * selectedTargets.length;
-  const previewStateLabel = applyResult
-    ? applyResult.errors.length > 0
-      ? "有错误"
-      : "已执行"
-    : blocked
-    ? "有阻塞"
-    : "未写入";
-  const previewStatusTitle = applyResult
-    ? applyResult.errors.length > 0
-      ? "执行完成，但有错误"
-      : "执行完成"
-    : blocked
-    ? "存在冲突，无法执行"
-    : activePlan
-    ? "无覆盖、无阻塞"
-    : "等待生成预览";
-  const previewStatusBody = applyResult
-    ? applyResult.errors.length > 0
-      ? `失败 ${applyResult.errors.length} 项，请查看错误信息。`
-      : `${applyResult.appliedOperations.length} 项已执行，${applyResult.skippedOperations.length} 项已跳过。`
-    : blocked
-    ? "本次不会写入，请先处理详情中的问题。"
-    : activePlan
-    ? "执行前仍可查看每一项写入路径。"
-    : "预览前不会写入。";
-  const previewTargetsText = selectedTargets.length > 0
-    ? selectedTargets.map((agent) => agent.label).join("、")
-    : "未选择";
-  const previewScopeText = targetScope === "project"
-    ? selectedProjectPath
-      ? `${projectDisplayName(selectedProjectPath)} 项目 Skills 目录`
-      : "未选择项目"
-    : "全局 Skills 目录";
-  const destinationPreviewTargets = selectedTargets.slice(0, 4);
 
   function toggleTarget(agentId: string) {
     setSelectedTargetIds((current) => {
@@ -290,7 +253,6 @@ export function SyncView({
 
         <div className="sync-work-grid">
           <section className="sync-form-pane">
-            <div className="sync-form-sections">
             <SyncSection
               number="1"
               title="已选 Skill"
@@ -456,93 +418,39 @@ export function SyncView({
                 </div>
               )}
             </SyncSection>
-            </div>
-
-            <aside className="sync-confirm-pane">
-              <div className="preview-pane-head">
-                <div>
-                  <h1>操作预览</h1>
-                  <p>生成预览前不会写入。</p>
-                </div>
-                <span className={`preview-state ${applyResult?.errors.length || blocked ? "blocked" : ""}`}>
-                  {previewStateLabel}
-                </span>
-              </div>
-
-              <div className="preview-tabs-row">
-                <span className="preview-tab active">摘要</span>
-                {planDetails ? (
-                  <PlanInfoDisclosure
-                    details={planDetails}
-                    onIncludeReplacement={includeReplacement}
-                    busy={busy}
-                    label={`${previewDetailCount} 项详情`}
-                  />
-                ) : (
-                  <span className="preview-tab muted">{previewDetailCount} 项详情</span>
-                )}
-              </div>
-
-              <div className={`confirm-summary ${applyResult?.errors.length || blocked ? "blocked" : ""}`}>
-                {applyResult?.errors.length || blocked ? <AlertTriangle size={18} /> : <Check size={18} />}
-                <span className="summary-body">
-                  <strong>{previewStatusTitle}</strong>
-                  <span className="summary-sub">{previewStatusBody}</span>
-                </span>
-              </div>
-
-              {blocked && activePlan && (
-                <div className="banner warning">
-                  <AlertTriangle size={17} />
-                  <span>{activePlan.blockedConflicts.join(" · ")}</span>
-                </div>
-              )}
-
-              <div className="preview-summary-list">
-                <div>
-                  <b>将执行</b>
-                  <span>{previewOperationText}</span>
-                </div>
-                <div>
-                  <b>目标</b>
-                  <span>{previewTargetsText}</span>
-                </div>
-                <div>
-                  <b>范围</b>
-                  <span>{previewScopeText}</span>
-                </div>
-              </div>
-
-              {destinationPreviewTargets.length > 0 && (
-                <div className="destinations-preview">
-                  <div className="dest-label">目标位置</div>
-                  <div className="dest-list">
-                    {destinationPreviewTargets.map((agent) => {
-                      const targetPath = targetPathPreview(agent, targetScope, selectedProjectPath);
-                      return (
-                        <div className="dest-item" key={agent.id}>
-                          <AgentIcon agent={agent} />
-                          <span className="dest-text">
-                            <strong className="dest-agent">{agent.label}</strong>
-                            <code className="dest-path" title={targetPath ?? ""}>
-                              {targetPath ? compactPath(targetPath) : "等待选择路径"}
-                            </code>
-                          </span>
-                          <span className="dest-action">{syncMethodLabel(syncMode, quickMethod)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {selectedTargets.length > destinationPreviewTargets.length && (
-                    <div className="dest-hint">还有 {selectedTargets.length - destinationPreviewTargets.length} 个目标会在详情中展开。</div>
-                  )}
-                </div>
-              )}
-            </aside>
           </section>
         </div>
 
         <div className="sync-action-bar">
+          {applyResult ? (
+            <div className={`apply-result ${applyResult.errors.length ? "error" : "success"}`} role="status">
+              <span>
+                {applyResult.errors.length ? "执行完成，但有错误" : "执行完成"} ·{" "}
+                {activePlan && summary
+                  ? applyResultSummary(activePlan, summary, selectedSkillCount, applyResult)
+                  : `${applyResult.appliedOperations.length} 已执行 · ${applyResult.skippedOperations.length} 已跳过`}
+              </span>
+              {applyResult.errors.map((item) => (
+                <code key={item}>{item}</code>
+              ))}
+            </div>
+          ) : activePlan ? (
+            <div className="plan-status-wrap">
+              <div className={`plan-status-pill ${blocked ? "blocked" : ""}`}>
+                {blocked ? <AlertTriangle size={14} /> : <Check size={14} />}
+                <span>{confirmationText}</span>
+              </div>
+              {planDetails && (
+                <PlanInfoDisclosure details={planDetails} onIncludeReplacement={includeReplacement} busy={busy} />
+              )}
+            </div>
+          ) : bottomPreviewText ? (
+            <div className="action-preview">
+              <span className="preview-label">操作预览</span>
+              <span className="preview-sep"> · </span>
+              {bottomPreviewText}
+            </div>
+          ) : null}
           <div className="action-buttons-end">
             {generatedPlan ? (
               <div className="button-pair">
@@ -570,15 +478,15 @@ export function SyncView({
 function PlanInfoDisclosure({
   details,
   onIncludeReplacement,
-  busy,
-  label
+  busy
 }: {
   details: PlanDetail[];
   onIncludeReplacement: (operation: SyncOperation) => void;
   busy: boolean;
-  label?: string;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>();
 
   function updatePanelPosition() {
@@ -587,12 +495,12 @@ function PlanInfoDisclosure({
 
     const viewportMargin = 16;
     const buttonRect = button.getBoundingClientRect();
-    const panelWidth = Math.min(620, Math.max(280, window.innerWidth - viewportMargin * 2));
+    const panelWidth = Math.min(560, Math.max(280, window.innerWidth - viewportMargin * 2));
     const minLeft = viewportMargin;
     const maxLeft = Math.max(minLeft, window.innerWidth - panelWidth - viewportMargin);
-    const preferredLeft = buttonRect.right - panelWidth;
+    const preferredLeft = buttonRect.left;
     const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
-    const maxHeight = Math.min(380, Math.max(180, buttonRect.top - viewportMargin), window.innerHeight - viewportMargin * 2);
+    const maxHeight = Math.min(380, Math.max(180, buttonRect.top - viewportMargin));
 
     setPanelStyle({
       left,
@@ -603,17 +511,47 @@ function PlanInfoDisclosure({
   }
 
   useEffect(() => {
+    if (!open) return undefined;
+    updatePanelPosition();
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     window.addEventListener("resize", updatePanelPosition);
-    return () => window.removeEventListener("resize", updatePanelPosition);
-  }, []);
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("resize", updatePanelPosition);
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
 
   return (
-    <div className="plan-info-wrap" onPointerEnter={updatePanelPosition} onFocusCapture={updatePanelPosition}>
-      <button ref={buttonRef} className="plan-info-button" type="button" aria-label="查看同步明细">
+    <div className="plan-info-wrap" ref={wrapRef}>
+      <button
+        ref={buttonRef}
+        className={`plan-info-button ${open ? "active" : ""}`}
+        type="button"
+        aria-label="查看同步明细"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen((current) => {
+            const next = !current;
+            if (!current) window.requestAnimationFrame(updatePanelPosition);
+            return next;
+          });
+        }}
+      >
         <Info size={14} />
-        {label && <span>{label}</span>}
       </button>
-      <PlanDetailPanel details={details} onIncludeReplacement={onIncludeReplacement} busy={busy} style={panelStyle} />
+      {open && (
+        <PlanDetailPanel details={details} onIncludeReplacement={onIncludeReplacement} busy={busy} style={panelStyle} />
+      )}
     </div>
   );
 }
@@ -633,15 +571,6 @@ function SyncSection({ number, title, action, children }: { number?: string; tit
   );
 }
 
-function targetPathPreview(agent: AgentRecord, scope: "global" | "project", projectPath: string | null) {
-  if (scope === "project") {
-    const root = agent.projectRoots[0];
-    if (!projectPath || !root) return undefined;
-    return joinPath(projectPath, root);
-  }
-  return agent.globalRoots[0];
-}
-
 function draftPlanSentence(
   mode: SyncMode,
   method: QuickMigrationMethod,
@@ -655,11 +584,20 @@ function draftPlanSentence(
   if (scope === "project" && !projectPath) return "请选择要同步的本地项目。";
   const scopeText = scope === "project" ? `到项目 ${projectDisplayName(projectPath ?? "")}` : "到全局";
   if (mode === "managed") {
-    return `导入中心库 ${skillCount} 个 Skill，并为 ${targetCount} 个 Agent ${scopeText}创建软链接。`;
+    return `导入中心库 ${skillCount} 个 Skill，并为 ${targetCount} 个 Agent ${scopeText} 创建软链接。`;
   }
   return method === "copy"
     ? `复制 ${skillCount} 个 Skill ${scopeText}的 ${targetCount} 个 Agent 技能目录`
     : `为 ${skillCount} 个 Skill ${scopeText}的 ${targetCount} 个 Agent 创建软链接`;
+}
+
+function targetPathPreview(agent: AgentRecord, scope: "global" | "project", projectPath: string | null) {
+  if (scope === "project") {
+    const root = agent.projectRoots[0];
+    if (!projectPath || !root) return undefined;
+    return joinPath(projectPath, root);
+  }
+  return agent.globalRoots[0];
 }
 
 function joinPath(base: string, relative: string) {
@@ -669,6 +607,50 @@ function joinPath(base: string, relative: string) {
 function projectDisplayName(path: string) {
   const clean = path.replace(/\/+$/, "");
   return clean.split("/").pop() || clean;
+}
+
+function applyResultSummary(
+  plan: SyncPlan,
+  summary: ReturnType<typeof syncPlanSummary>,
+  skillCount: number,
+  applyResult: ApplyResult
+) {
+  if (applyResult.errors.length > 0) {
+    return `失败 ${applyResult.errors.length} 项，已停止后续操作`;
+  }
+  const preview = planSummarySentence(plan, summary, skillCount);
+  return preview.startsWith(`${skillCount} 个 Skills：将`)
+    ? preview.replace(`${skillCount} 个 Skills：将`, `${skillCount} 个 Skills：已`)
+    : preview.startsWith("将")
+    ? preview.replace("将", "已")
+    : preview;
+}
+
+function getOperationPreview(
+  skillCount: number,
+  targetCount: number,
+  scope: "global" | "project",
+  isGenerated: boolean,
+  quickMethod: QuickMigrationMethod,
+  syncMode: SyncMode
+): string {
+  const dir = scope === "project" ? "项目目录" : "全局目录";
+
+  if (syncMode === "managed") {
+    return isGenerated
+      ? `导入中心库并用软链接分发 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`
+      : `导入中心库后，用软链接分发 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`;
+  }
+
+  if (quickMethod === "symlink") {
+    return isGenerated
+      ? `为 ${skillCount} 个 Skill 在 ${targetCount} 个 Agent 的${dir} 创建软链接`
+      : `将为 ${skillCount} 个 Skill 在 ${targetCount} 个 Agent 的${dir} 创建软链接`;
+  }
+
+  return isGenerated
+    ? `复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`
+    : `将复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`;
 }
 
 function planSummarySentence(plan: SyncPlan, summary: ReturnType<typeof syncPlanSummary> | null, skillCount: number) {
@@ -736,7 +718,7 @@ function PlanDetailPanel({
   const hasDetails = details.length > 0;
 
   return (
-    <div className="plan-detail-panel" role="tooltip" style={style}>
+    <div className="plan-detail-panel" role="dialog" aria-label="同步明细" style={style}>
       {!hasDetails ? (
         <div className="plan-detail-empty">
           <strong>本次没有异常项</strong>
@@ -778,13 +760,14 @@ function PlanDetailGroup({
             {skillItems.map((item) => (
               <div className={`plan-detail-item ${item.kind}`} key={`${item.kind}-${item.agentLabel}-${item.skillId}-${item.label}-${item.path ?? ""}`}>
                 <div className="plan-detail-item-main">
-                  <div className="plan-detail-item-head">
-                    <strong>{item.title}</strong>
-                    <span>{item.label}</span>
+                  <div className="plan-detail-item-meta">
+                    <span className="plan-detail-item-label">{item.label}</span>
+                    <span className="plan-detail-item-agent">{item.agentLabel}</span>
                   </div>
-                  <p>{item.body}</p>
-                  {item.path && <code title={item.path}>{compactPath(item.path)}</code>}
-                  {item.backupPath && <code title={item.backupPath}>备份到 {compactPath(item.backupPath)}</code>}
+                  <strong className="plan-detail-item-title">{item.title}</strong>
+                  <p className="plan-detail-item-body">{item.body}</p>
+                  {item.path && <code className="plan-detail-item-path" title={item.path}>{compactPath(item.path)}</code>}
+                  {item.backupPath && <code className="plan-detail-item-path" title={item.backupPath}>备份到 {compactPath(item.backupPath)}</code>}
                 </div>
                 {item.canIncludeReplacement && item.operation && (
                   <button className="secondary-button compact" disabled={busy} type="button" onClick={() => onIncludeReplacement(item.operation!)}>
@@ -916,37 +899,4 @@ function replacementKey(agentId: string, skillId: string, targetPath: string) {
 function replacementFromKey(key: string): SyncReplacement {
   const [agentId, skillId, targetPath] = key.split("\u0000");
   return { agentId, skillId, targetPath };
-}
-
-function getOperationPreview(
-  skillCount: number,
-  targetCount: number,
-  scope: "global" | "project",
-  isGenerated: boolean,
-  quickMethod: QuickMigrationMethod,
-  syncMode: SyncMode
-): string {
-  const dir = scope === "project" ? "项目目录" : "全局目录";
-
-  if (syncMode === "managed") {
-    return isGenerated
-      ? `导入中心库并用软链接分发 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`
-      : `导入中心库后，用软链接分发 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`;
-  }
-
-  if (quickMethod === "symlink") {
-    return isGenerated
-      ? `为 ${skillCount} 个 Skill 在 ${targetCount} 个 Agent 的${dir}创建软链接`
-      : `将为 ${skillCount} 个 Skill 在 ${targetCount} 个 Agent 的${dir}创建软链接`;
-  }
-
-  // quick + copy
-  return isGenerated
-    ? `复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`
-    : `将复制 ${skillCount} 个 Skill 到 ${targetCount} 个 Agent 的${dir}`;
-}
-
-function syncMethodLabel(syncMode: SyncMode, quickMethod: QuickMigrationMethod) {
-  if (syncMode === "managed") return "软链接";
-  return quickMethod === "copy" ? "复制" : "软链接";
 }

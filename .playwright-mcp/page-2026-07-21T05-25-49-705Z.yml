@@ -1,0 +1,11 @@
+- main [ref=f3e3]:
+  - generic "主导航" [ref=f3e5]:
+    - button [ref=f3e6] [cursor=pointer]:
+      - img "Oh My Skills" [ref=f3e7]
+    - button "发现 Skills" [ref=f3e8] [cursor=pointer]
+    - button "同步 Skills" [ref=f3e10] [cursor=pointer]
+  - region "发现 Skills 空状态" [ref=f3e14]:
+    - generic [ref=f3e23]: 本地可用 Skills 可能发生了变化，可以重新扫描或直接跳过
+    - generic [ref=f3e25]:
+      - button "重新扫描" [ref=f3e26] [cursor=pointer]
+      - button "直接跳过" [ref=f3e28] [cursor=pointer]

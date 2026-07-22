@@ -28,7 +28,7 @@ pub fn preview_adopt(app: &AppHandle, source: InstallationRef) -> Result<SyncPla
     let skill_md = source_path.join("SKILL.md");
     if !skill_md.exists() {
         blocked_conflicts.push(format!(
-            "{} is missing SKILL.md and cannot be adopted",
+            "{} 缺少 SKILL.md，无法导入中心库",
             path_to_string(&source_path)
         ));
     }
@@ -42,25 +42,25 @@ pub fn preview_adopt(app: &AppHandle, source: InstallationRef) -> Result<SyncPla
                 Some(&source_path),
                 Some(&destination),
                 None,
-                &format!("{} is already imported with the same content", source.slug),
+                &format!("{} 已在中心库中，内容相同", source.slug),
                 None,
                 Some(&source.slug),
             ));
         } else {
             blocked_conflicts.push(format!(
-                "{} already exists in the central library with different content",
+                "中心库已有 {}，但内容不同",
                 source.slug
             ));
         }
     } else {
-        preconditions.push("Copy source skill into the central library".to_string());
+        preconditions.push("将 Skill 复制到中心库".to_string());
         operations.push(operation(
             "copy-to-library",
             "planned",
             Some(&source_path),
             Some(&destination),
             None,
-            &format!("Import {} into the central library", source.slug),
+            &format!("将 {} 导入中心库", source.slug),
             None,
             Some(&source.slug),
         ));
@@ -153,7 +153,7 @@ pub fn preview_sync_from_installation(
 
     if source.entry_path.is_empty() || !source_path.join("SKILL.md").exists() {
         blocked_conflicts.push(format!(
-            "{} has no valid source SKILL.md and cannot be synced",
+            "{} 没有有效的 SKILL.md，无法同步",
             source.slug
         ));
     }
@@ -174,26 +174,26 @@ pub fn preview_sync_from_installation(
                     Some(&source_path),
                     Some(&destination),
                     None,
-                    &format!("{} is already imported with the same content", source.slug),
+                    &format!("{} 已在中心库中，内容相同", source.slug),
                     None,
                     Some(&source.slug),
                 ));
             } else {
                 blocked_conflicts.push(format!(
-                    "{} already exists in the central library with different content",
+                    "中心库已有 {}，但内容不同",
                     source.slug
                 ));
             }
         } else {
             preconditions
-                .push("Copy source skill into the central library before linking".to_string());
+                .push("先将 Skill 复制到中心库，再创建软链接".to_string());
             operations.push(operation(
                 "copy-to-library",
                 "planned",
                 Some(&source_path),
                 Some(&destination),
                 None,
-                &format!("Import {} into the central library", source.slug),
+                &format!("将 {} 导入中心库", source.slug),
                 None,
                 Some(&source.slug),
             ));
@@ -242,7 +242,7 @@ pub fn preview_quick_migration(
 
     if source.entry_path.is_empty() || !source_path.join("SKILL.md").exists() {
         blocked_conflicts.push(format!(
-            "{} has no valid source SKILL.md and cannot be migrated",
+            "{} 没有有效的 SKILL.md，无法迁移",
             source.slug
         ));
     }
@@ -329,7 +329,7 @@ pub fn preview_batch_sync(
 
         if !source_path.join("SKILL.md").exists() {
             blocked_conflicts.push(format!(
-                "{} has no valid source SKILL.md and cannot be synced",
+                "{} 没有有效的 SKILL.md，无法同步",
                 source.slug
             ));
             append_sync_operations(
@@ -357,26 +357,26 @@ pub fn preview_batch_sync(
                     Some(&source_path),
                     Some(&destination),
                     None,
-                    &format!("{} is already imported with the same content", source.slug),
+                    &format!("{} 已在中心库中，内容相同", source.slug),
                     None,
                     Some(&source.slug),
                 ));
             } else {
                 blocked_conflicts.push(format!(
-                    "{} already exists in the central library with different content",
+                    "中心库已有 {}，但内容不同",
                     source.slug
                 ));
             }
         } else {
             preconditions
-                .push("Copy source skill into the central library before linking".to_string());
+                .push("先将 Skill 复制到中心库，再创建软链接".to_string());
             operations.push(operation(
                 "copy-to-library",
                 "planned",
                 Some(&source_path),
                 Some(&destination),
                 None,
-                &format!("Import {} into the central library", source.slug),
+                &format!("将 {} 导入中心库", source.slug),
                 None,
                 Some(&source.slug),
             ));
@@ -426,7 +426,7 @@ pub fn preview_batch_quick_migration(
         let source_path = PathBuf::from(&source.entry_path);
         if source.entry_path.is_empty() || !source_path.join("SKILL.md").exists() {
             blocked_conflicts.push(format!(
-                "{} has no valid source SKILL.md and cannot be migrated",
+                "{} 没有有效的 SKILL.md，无法迁移",
                 source.slug
             ));
             append_quick_migration_operations(
@@ -504,31 +504,33 @@ fn append_quick_migration_operations(
 
     for target in targets {
         let Some(agent) = find_agent(&target.agent_id) else {
-            blocked_conflicts.push(format!("Unknown agent id '{}'", target.agent_id));
+            blocked_conflicts.push(format!("未知 Agent：{}", target.agent_id));
             continue;
         };
         if method == "symlink" && !agent.symlink_support {
             blocked_conflicts.push(format!(
-                "{} does not support symlink migration",
+                "{} 不支持软链接迁移",
                 agent.label
             ));
             continue;
         }
         if !installed_agent_ids.contains(&agent.id) {
-            blocked_conflicts.push(format!("{} is not detected as installed", agent.label));
+            blocked_conflicts.push(format!("未检测到已安装的 {}", agent.label));
             continue;
         }
         let target_roots = target_roots_for_agent(&agent, &target, settings);
         if target_roots.is_empty() {
             let scope = target.scope.as_deref().unwrap_or("global");
+            let scope_label = if scope == "project" { "项目" } else { "全局" };
             blocked_conflicts.push(format!(
-                "{} has no {scope} skill root configured",
+                "{} 未配置{scope_label} Skills 目录",
                 agent.label
             ));
             continue;
         }
 
         for (scope, root_path) in target_roots {
+            let scope_label = if scope == "project" { "项目" } else { "全局" };
             let target_path = root_path.join(skill_id);
             if target_path == source_path {
                 operations.push(operation(
@@ -537,7 +539,7 @@ fn append_quick_migration_operations(
                     Some(source_path),
                     Some(&target_path),
                     None,
-                    &format!("{} is already in {}", skill_id, agent.label),
+                    &format!("{} 已在 {} 中", skill_id, agent.label),
                     Some(&agent.id),
                     Some(skill_id),
                 ));
@@ -545,14 +547,14 @@ fn append_quick_migration_operations(
             }
 
             if !root_path.exists() {
-                preconditions.push(format!("Create {} {scope} skill root", agent.label));
+                preconditions.push(format!("创建 {} 的{scope_label} Skills 目录", agent.label));
                 operations.push(operation(
                     "create-root",
                     "planned",
                     None,
                     Some(&root_path),
                     None,
-                    &format!("Create {scope} skill root for {}", agent.label),
+                    &format!("为 {} 创建{scope_label} Skills 目录", agent.label),
                     Some(&agent.id),
                     Some(skill_id),
                 ));
@@ -606,38 +608,40 @@ fn append_sync_operations(
 
     for target in targets {
         let Some(agent) = find_agent(&target.agent_id) else {
-            blocked_conflicts.push(format!("Unknown agent id '{}'", target.agent_id));
+            blocked_conflicts.push(format!("未知 Agent：{}", target.agent_id));
             continue;
         };
         if !agent.symlink_support {
-            blocked_conflicts.push(format!("{} does not support symlink sync", agent.label));
+            blocked_conflicts.push(format!("{} 不支持软链接同步", agent.label));
             continue;
         }
         if !installed_agent_ids.contains(&agent.id) {
-            blocked_conflicts.push(format!("{} is not detected as installed", agent.label));
+            blocked_conflicts.push(format!("未检测到已安装的 {}", agent.label));
             continue;
         }
         let target_roots = target_roots_for_agent(&agent, &target, &settings);
         if target_roots.is_empty() {
             let scope = target.scope.as_deref().unwrap_or("global");
+            let scope_label = if scope == "project" { "项目" } else { "全局" };
             blocked_conflicts.push(format!(
-                "{} has no {scope} skill root configured",
+                "{} 未配置{scope_label} Skills 目录",
                 agent.label
             ));
             continue;
         }
 
         for (scope, root_path) in target_roots {
+            let scope_label = if scope == "project" { "项目" } else { "全局" };
             let target_path = root_path.join(&skill_id);
             if !root_path.exists() {
-                preconditions.push(format!("Create {} {scope} skill root", agent.label));
+                preconditions.push(format!("创建 {} 的{scope_label} Skills 目录", agent.label));
                 operations.push(operation(
                     "create-root",
                     "planned",
                     None,
                     Some(&root_path),
                     None,
-                    &format!("Create {scope} skill root for {}", agent.label),
+                    &format!("为 {} 创建{scope_label} Skills 目录", agent.label),
                     Some(&agent.id),
                     Some(&skill_id),
                 ));
@@ -836,7 +840,7 @@ fn plan_target_sync(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("Link {} into {}", skill_id, agent_label),
+            &format!("将 {} 软链接到 {}", skill_id, agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -859,7 +863,7 @@ fn plan_target_sync(
             None,
             Some(target_path),
             None,
-            &format!("Remove broken symlink in {}", agent_label),
+            &format!("移除 {} 中的失效软链接", agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -869,7 +873,7 @@ fn plan_target_sync(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("Relink {} into {}", skill_id, agent_label),
+            &format!("将 {} 重新软链接到 {}", skill_id, agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -883,7 +887,7 @@ fn plan_target_sync(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("{} is already linked into {}", skill_id, agent_label),
+            &format!("{} 已软链接到 {}", skill_id, agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -899,7 +903,7 @@ fn plan_target_sync(
                     None,
                     Some(target_path),
                     Some(&backup_path),
-                    &format!("Back up existing same-content skill in {}", agent_label),
+                    &format!("备份 {} 中内容相同的同名 Skill", agent_label),
                     Some(agent_id),
                     Some(skill_id),
                 ));
@@ -909,7 +913,7 @@ fn plan_target_sync(
                     Some(source_path),
                     Some(target_path),
                     None,
-                    &format!("Link central {} into {}", skill_id, agent_label),
+                    &format!("将中心库中的 {} 软链接到 {}", skill_id, agent_label),
                     Some(agent_id),
                     Some(skill_id),
                 ));
@@ -921,7 +925,7 @@ fn plan_target_sync(
                     Some(target_path),
                     None,
                     &format!(
-                        "{} already has {} with the same content; keeping existing entry",
+                        "{} 已有 {}，内容相同，保留原入口",
                         agent_label, skill_id
                     ),
                     Some(agent_id),
@@ -935,12 +939,12 @@ fn plan_target_sync(
                 Some(source_path),
                 Some(target_path),
                 None,
-                &format!("{} already has {} with different content", agent_label, skill_id),
+                &format!("{} 已有 {}，但内容不同", agent_label, skill_id),
                 Some(agent_id),
                 Some(skill_id),
             ));
             blocked_conflicts.push(format!(
-                "{} already has {} with different content",
+                "{} 已有 {}，但内容不同",
                 agent_label, skill_id
             ));
         }
@@ -951,12 +955,12 @@ fn plan_target_sync(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("{} has an invalid or unreadable {} entry", agent_label, skill_id),
+            &format!("{} 的 {} 入口无效或无法读取", agent_label, skill_id),
             Some(agent_id),
             Some(skill_id),
         ));
         blocked_conflicts.push(format!(
-            "{} has an invalid or unreadable {} entry",
+            "{} 的 {} 入口无效或无法读取",
             agent_label, skill_id
         ));
     }
@@ -982,9 +986,9 @@ fn plan_quick_target(
         "copy-to-target"
     };
     let final_message = if method == "symlink" {
-        format!("Link {} into {}", skill_id, agent_label)
+        format!("将 {} 软链接到 {}", skill_id, agent_label)
     } else {
-        format!("Copy {} into {}", skill_id, agent_label)
+        format!("将 {} 复制到 {}", skill_id, agent_label)
     };
 
     if fs::symlink_metadata(target_path).is_err() {
@@ -1017,7 +1021,7 @@ fn plan_quick_target(
             None,
             Some(target_path),
             None,
-            &format!("Remove broken symlink in {}", agent_label),
+            &format!("移除 {} 中的失效软链接", agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -1041,7 +1045,7 @@ fn plan_quick_target(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("{} is already linked into {}", skill_id, agent_label),
+            &format!("{} 已软链接到 {}", skill_id, agent_label),
             Some(agent_id),
             Some(skill_id),
         ));
@@ -1057,7 +1061,7 @@ fn plan_quick_target(
                 Some(target_path),
                 None,
                 &format!(
-                    "{} already exists with the same content in {}; keeping existing entry",
+                    "{} 在 {} 中已有相同内容，保留原入口",
                     skill_id, agent_label
                 ),
                 Some(agent_id),
@@ -1070,12 +1074,12 @@ fn plan_quick_target(
                 Some(source_path),
                 Some(target_path),
                 None,
-                &format!("{} already has {} with different content", agent_label, skill_id),
+                &format!("{} 已有 {}，但内容不同", agent_label, skill_id),
                 Some(agent_id),
                 Some(skill_id),
             ));
             blocked_conflicts.push(format!(
-                "{} already has {} with different content",
+                "{} 已有 {}，但内容不同",
                 agent_label, skill_id
             ));
         }
@@ -1086,12 +1090,12 @@ fn plan_quick_target(
             Some(source_path),
             Some(target_path),
             None,
-            &format!("{} has an invalid or unreadable {} entry", agent_label, skill_id),
+            &format!("{} 的 {} 入口无效或无法读取", agent_label, skill_id),
             Some(agent_id),
             Some(skill_id),
         ));
         blocked_conflicts.push(format!(
-            "{} has an invalid or unreadable {} entry",
+            "{} 的 {} 入口无效或无法读取",
             agent_label, skill_id
         ));
     }
@@ -1208,7 +1212,7 @@ fn plan_id(prefix: &str) -> String {
 fn required_path(value: Option<&str>, operation: &SyncOperation) -> Result<PathBuf, String> {
     value
         .map(PathBuf::from)
-        .ok_or_else(|| format!("Operation {} is missing a required path", operation.id))
+        .ok_or_else(|| format!("操作 {} 缺少必要路径", operation.id))
 }
 
 fn plans_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1428,7 +1432,7 @@ mod tests {
             Some(&source),
             Some(&library),
             None,
-            "Import demo into the central library",
+            "将 demo 导入中心库",
             None,
             Some("demo"),
         )];
