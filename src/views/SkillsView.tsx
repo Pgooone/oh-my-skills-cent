@@ -743,7 +743,7 @@ function SkillDetail({
 
       {skill.issues.length > 0 && (
         <DetailField label="问题">
-          <IssueList issues={skill.issues} />
+          <IssueList issues={skill.issues} language={settings.language} />
         </DetailField>
       )}
     </div>

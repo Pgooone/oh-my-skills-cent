@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import type { CSSProperties } from "react";
 import { agentIconAsset } from "../agentIconRegistry";
+import { issueHint, issueLabel, normalizeLanguage, type Language } from "../i18n";
 import type { AgentRecord, SkillIssue, SkillRecord } from "../types";
 
 export function AgentIcon({ agent }: { agent: AgentRecord }) {
@@ -55,15 +56,24 @@ export function AgentBadge({ label, status }: { label: string; status: string })
   return <span className={`agent-badge ${status}`}>{label}</span>;
 }
 
-export function IssueList({ issues }: { issues: SkillIssue[] }) {
+export function IssueList({
+  issues,
+  language = "zh-CN"
+}: {
+  issues: SkillIssue[];
+  language?: string;
+}) {
+  const lang = normalizeLanguage(language);
+  const uniqueIssues = dedupeIssues(issues);
+
   return (
     <div className="issue-list">
-      {issues.map((issue, index) => (
-        <div className={`issue ${issue.severity}`} key={`${issue.code}-${index}`}>
+      {uniqueIssues.map((issue, index) => (
+        <div className={`issue ${issue.severity}`} key={`${issue.code}-${issue.path ?? ""}-${issue.agentId ?? ""}-${index}`}>
           <AlertTriangle size={14} />
           <span>
-            <strong>{issue.message}</strong>
-            <small>{issueActionHint(issue)}</small>
+            <strong>{issueLabel(lang, issue.code, issue.message)}</strong>
+            <small>{issueActionHint(issue, lang)}</small>
           </span>
         </div>
       ))}
@@ -71,10 +81,16 @@ export function IssueList({ issues }: { issues: SkillIssue[] }) {
   );
 }
 
-export function issueActionHint(issue: SkillIssue) {
-  if (issue.code === "broken-symlink") return "建议修复断开的软链接后再同步。";
-  if (issue.code === "content-conflict") return "建议先选择一个规范来源，避免覆盖不同内容。";
-  if (issue.code === "missing-skill-md") return "建议确认目录是否为有效 Skill。";
-  if (issue.code === "name-mismatch") return "这不是内容冲突；目录名用于路径和同步识别，frontmatter name 用于展示，长期建议统一。";
-  return issue.path ? `位置：${issue.path}` : "建议先检查这个 Skill 的来源和安装状态。";
+export function issueActionHint(issue: SkillIssue, language: Language = "zh-CN") {
+  return issueHint(language, issue.code, issue.path);
+}
+
+function dedupeIssues(issues: SkillIssue[]) {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    const key = [issue.code, issue.severity, issue.path ?? "", issue.agentId ?? ""].join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

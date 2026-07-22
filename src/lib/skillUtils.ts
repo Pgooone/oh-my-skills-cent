@@ -66,7 +66,7 @@ export function aggregateSkillsBySlug(skills: SkillRecord[]): SkillRecord[] {
     const primary = group.find((skill) => skill.canonicalStatus === "imported") ?? group[0];
     const installations = dedupeBy(group.flatMap((skill) => skill.installations), (installation) => installation.id);
     const issues = dedupeBy(group.flatMap((skill) => skill.issues), (issue) =>
-      [issue.code, issue.severity, issue.message, issue.path ?? "", issue.agentId ?? ""].join("\u0000")
+      [issue.code, issue.severity, issue.path ?? "", issue.agentId ?? ""].join("\u0000")
     );
     const hashes = new Set([
       ...group.flatMap((skill) => skill.canonicalHash ? [skill.canonicalHash] : []),
@@ -105,7 +105,10 @@ function skillIdentityFragments(skill: SkillRecord): SkillRecord[] {
   if (installationGroups.size <= 1) {
     return [{
       ...skill,
-      issues: skill.issues.filter((issue) => issue.code !== "content-conflict")
+      issues: dedupeBy(
+        skill.issues.filter((issue) => issue.code !== "content-conflict"),
+        (issue) => [issue.code, issue.severity, issue.path ?? "", issue.agentId ?? ""].join("\u0000")
+      )
     }];
   }
 
@@ -122,7 +125,7 @@ function skillIdentityFragments(skill: SkillRecord): SkillRecord[] {
       canonicalHash: canonicalMatches ? skill.canonicalHash : undefined,
       installations,
       issues: dedupeBy(installations.flatMap((installation) => installation.issues), (issue) =>
-        [issue.code, issue.severity, issue.message, issue.path ?? "", issue.agentId ?? ""].join("\u0000")
+        [issue.code, issue.severity, issue.path ?? "", issue.agentId ?? ""].join("\u0000")
       ),
       conflict: false
     };
@@ -195,7 +198,7 @@ export function skillListStatus(
     skill.issues.length > 0 ||
     skill.installations.some((installation) => installation.brokenSymlink || installation.status === "invalid" || installation.status === "broken")
   ) {
-    return { kind: "check", label: "需检查", title: "检测到内容冲突、缺失文件或无效安装入口" };
+    return { kind: "check", label: "需检查", title: "存在需处理的问题（断链、缺文件、内容冲突等）" };
   }
 
   if (updateCheck?.status === "available") {

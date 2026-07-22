@@ -1,6 +1,6 @@
-use crate::fs_ops::{ensure_dir, hash_dir, path_to_string, skill_slug_from_path};
+use crate::fs_ops::{ensure_dir, expand_home, hash_dir, path_to_string, skill_slug_from_path};
 use crate::models::{
-    InventorySnapshot, ResolvedRoot, ScanOptions, SkillContent, SkillFrontmatter,
+    AgentDefinition, InventorySnapshot, ResolvedRoot, ScanOptions, SkillContent, SkillFrontmatter,
     SkillInstallation, SkillIssue, SkillRecord, SyncPlan,
 };
 use crate::registry::{detect_agents, known_agents, resolve_roots};
@@ -39,10 +39,11 @@ pub fn scan(app: &AppHandle, options: ScanOptions) -> Result<InventorySnapshot, 
         let slug = key.slug.clone();
         let installations = dedupe_installations(grouped.remove(&key).unwrap_or_default());
         let canonical_install = canonical.get(&key);
-        let mut issues = installations
-            .iter()
-            .flat_map(|installation| installation.issues.clone())
-            .collect::<Vec<_>>();
+        let mut issues = dedupe_skill_issues(
+            installations
+                .iter()
+                .flat_map(|installation| installation.issues.clone()),
+        );
 
         let mut hashes = installations
             .iter()
@@ -315,6 +316,12 @@ fn managed_project_roots_from_history(app_data: &Path) -> Result<Vec<ResolvedRoo
                     if !root_path.exists() {
                         continue;
                     }
+                    // Global sync targets (e.g. ~/.cline/skills/foo) also match project root
+                    // patterns like ".cline/skills". Do not reclassify those as project roots,
+                    // or the same path is scanned twice and detail issues duplicate.
+                    if is_known_global_root(definition, &root_path) {
+                        continue;
+                    }
                     roots.push(ResolvedRoot {
                         agent_id: definition.id.clone(),
                         agent_label: definition.label.clone(),
@@ -346,6 +353,23 @@ fn project_root_from_target_path(target_path: &Path, relative: &str) -> Option<P
         return Some(parent.to_path_buf());
     }
     None
+}
+
+fn is_known_global_root(definition: &AgentDefinition, root_path: &Path) -> bool {
+    let root_key = path_identity_key(root_path);
+    definition.global_roots.iter().any(|global_root| {
+        path_identity_key(&expand_home(global_root)) == root_key
+    })
+}
+
+fn path_identity_key(path: &Path) -> String {
+    let clean = path_to_string(path).replace('\\', "/");
+    let trimmed = clean.trim_end_matches('/');
+    if trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':' {
+        trimmed.to_ascii_lowercase()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn dedupe_resolved_roots(roots: Vec<ResolvedRoot>) -> Vec<ResolvedRoot> {
@@ -454,11 +478,44 @@ fn duplicated_slugs(keys: &BTreeSet<SkillGroupKey>) -> BTreeSet<String> {
 }
 
 fn dedupe_installations(installations: Vec<SkillInstallation>) -> Vec<SkillInstallation> {
+    // Same physical entry can be discovered as both global and project when history
+    // reclassifies a global root. Prefer a single installation per agent + path.
+    let mut by_key: BTreeMap<String, SkillInstallation> = BTreeMap::new();
+    for installation in installations {
+        let key = format!(
+            "{}\u{0}{}",
+            installation.agent_id,
+            path_identity_key(Path::new(&installation.entry_path))
+        );
+        match by_key.get(&key) {
+            None => {
+                by_key.insert(key, installation);
+            }
+            Some(existing) if existing.scope == "project" && installation.scope == "global" => {
+                by_key.insert(key, installation);
+            }
+            Some(_) => {}
+        }
+    }
+    by_key.into_values().collect()
+}
+
+fn dedupe_skill_issues(issues: impl IntoIterator<Item = SkillIssue>) -> Vec<SkillIssue> {
     let mut seen = BTreeSet::new();
-    installations
-        .into_iter()
-        .filter(|installation| seen.insert(installation.id.clone()))
-        .collect()
+    let mut result = Vec::new();
+    for issue in issues {
+        let key = format!(
+            "{}\u{0}{}\u{0}{}\u{0}{}",
+            issue.code,
+            issue.severity,
+            issue.path.as_deref().unwrap_or(""),
+            issue.agent_id.as_deref().unwrap_or("")
+        );
+        if seen.insert(key) {
+            result.push(issue);
+        }
+    }
+    result
 }
 
 fn short_fingerprint(value: &str) -> String {
@@ -1009,6 +1066,142 @@ mod tests {
         assert_eq!(roots[0].agent_id, "amp");
         assert_eq!(roots[0].scope, "project");
         assert_eq!(roots[0].path, path_to_string(&project_root));
+    }
+
+    #[test]
+    fn history_does_not_reclassify_global_skill_roots_as_project() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let app_data = temp.path().join("app-data");
+        let plans = app_data.join("plans");
+        let home = temp.path().join("home");
+        let global_root = home.join(".cline").join("skills");
+        let plan_id = "global-sync-test";
+
+        fs::create_dir_all(&plans).expect("plans dir");
+        fs::create_dir_all(&global_root).expect("global root");
+        fs::write(
+            app_data.join("sync-history.json"),
+            serde_json::json!([{
+                "planId": plan_id,
+                "kind": "batch-sync",
+                "appliedAt": "2026-06-30T00:00:00Z",
+                "appliedOperations": ["global-link-op"],
+                "errors": []
+            }])
+            .to_string(),
+        )
+        .expect("history");
+
+        // Point HOME at the temp home so ~/.cline/skills expands to this fixture.
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+
+        let plan = SyncPlan {
+            plan_id: plan_id.to_string(),
+            kind: "batch-sync".to_string(),
+            risk_level: "low".to_string(),
+            operations: vec![SyncOperation {
+                id: "global-link-op".to_string(),
+                op_type: "create-symlink".to_string(),
+                status: "planned".to_string(),
+                source_path: Some(path_to_string(
+                    &temp.path().join("library").join("ask-matt"),
+                )),
+                target_path: Some(path_to_string(&global_root.join("ask-matt"))),
+                backup_path: None,
+                message: "Link ask-matt into Cline global skills".to_string(),
+                agent_id: Some("cline".to_string()),
+                skill_id: Some("ask-matt".to_string()),
+            }],
+            preconditions: Vec::new(),
+            blocked_conflicts: Vec::new(),
+            created_at: "2026-06-30T00:00:00Z".to_string(),
+        };
+        fs::write(
+            plans.join(format!("{plan_id}.json")),
+            serde_json::to_string(&plan).expect("plan json"),
+        )
+        .expect("plan");
+
+        let roots = managed_project_roots_from_history(&app_data).expect("managed roots");
+
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        assert!(
+            roots.is_empty(),
+            "global skill roots must not reappear as managed project roots: {roots:?}"
+        );
+    }
+
+    #[test]
+    fn skill_issues_are_deduped_for_same_path_and_agent() {
+        let issues = dedupe_skill_issues(vec![
+            issue(
+                "broken-symlink",
+                "error",
+                "This skill entry is a broken symlink",
+                Some(Path::new("/tmp/.cline/skills/ask-matt")),
+                Some("cline"),
+            ),
+            issue(
+                "broken-symlink",
+                "error",
+                "This skill entry is a broken symlink",
+                Some(Path::new("/tmp/.cline/skills/ask-matt")),
+                Some("cline"),
+            ),
+            issue(
+                "missing-skill-md",
+                "warning",
+                "This folder is not a valid skill because SKILL.md is missing",
+                Some(Path::new("/tmp/.cline/skills/other")),
+                Some("cline"),
+            ),
+        ]);
+
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].code, "broken-symlink");
+        assert_eq!(issues[1].code, "missing-skill-md");
+    }
+
+    #[test]
+    fn installations_prefer_global_over_duplicate_project_scope() {
+        let global = SkillInstallation {
+            id: "cline:global:/tmp/.cline/skills/ask-matt".to_string(),
+            agent_id: "cline".to_string(),
+            agent_label: "Cline".to_string(),
+            scope: "global".to_string(),
+            root_path: "/tmp/.cline/skills".to_string(),
+            entry_path: "/tmp/.cline/skills/ask-matt".to_string(),
+            real_path: None,
+            symlink_target: Some("/missing".to_string()),
+            is_symlink: true,
+            broken_symlink: true,
+            hash: None,
+            frontmatter: None,
+            status: "broken".to_string(),
+            issues: vec![issue(
+                "broken-symlink",
+                "error",
+                "This skill entry is a broken symlink",
+                Some(Path::new("/tmp/.cline/skills/ask-matt")),
+                Some("cline"),
+            )],
+        };
+        let project = SkillInstallation {
+            id: "cline:project:/tmp/.cline/skills/ask-matt".to_string(),
+            scope: "project".to_string(),
+            ..global.clone()
+        };
+
+        let installations = dedupe_installations(vec![project, global.clone()]);
+        assert_eq!(installations.len(), 1);
+        assert_eq!(installations[0].scope, "global");
+        assert_eq!(installations[0].id, global.id);
     }
 
     #[test]

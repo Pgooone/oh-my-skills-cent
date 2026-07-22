@@ -115,12 +115,20 @@ const zh = {
   opRemoveExisting: "移除现有项",
   opBackupExisting: "备份现有项",
   opCreateSymlink: "创建软链接",
-  issueBrokenSymlink: "这个 Skill 条目是断开的软链接",
-  issueMissingSkillMd: "这个目录缺少 SKILL.md，不是有效 Skill",
-  issueNameMismatch: "Frontmatter name 与目录名不一致",
-  issueContentConflict: "这个 Skill 存在多个不同内容版本",
-  issueMissingFrontmatter: "SKILL.md 没有有效 frontmatter",
-  issueUnreadableSkillMd: "无法读取 SKILL.md"
+  issueBrokenSymlink: "软链接已失效",
+  issueMissingSkillMd: "缺少 SKILL.md",
+  issueNameMismatch: "展示名与文件夹名不同",
+  issueContentConflict: "发现多个不同内容版本",
+  issueMissingFrontmatter: "缺少有效 frontmatter",
+  issueUnreadableSkillMd: "无法读取 SKILL.md",
+  issueHintBrokenSymlink: "Skill 无法正常使用。目标位置不存在，建议修好或移除该入口后再同步。",
+  issueHintContentConflict: "直接同步可能互相覆盖。先选定一个规范来源，再导入或分发。",
+  issueHintMissingSkillMd: "当前不是有效 Skill，无法可靠同步。建议补全文件或清理无效目录。",
+  issueHintNameMismatch: "不是内容冲突，同步通常不受影响。文件夹名管路径识别，展示名只管界面；长期建议统一。",
+  issueHintMissingFrontmatter: "仍可能有正文，但名称/描述可能不准。补全 YAML 头信息后再同步更稳妥。",
+  issueHintUnreadableSkillMd: "无法确认内容是否可用。检查权限或文件损坏后再同步。",
+  issueHintDefault: "先核对来源路径和安装状态。",
+  issueHintLocation: "位置："
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -233,12 +241,20 @@ const en: Record<keyof typeof zh, string> = {
   opRemoveExisting: "remove existing",
   opBackupExisting: "backup existing",
   opCreateSymlink: "create symlink",
-  issueBrokenSymlink: "This skill entry is a broken symlink",
-  issueMissingSkillMd: "This folder is not a valid skill because SKILL.md is missing",
-  issueNameMismatch: "Frontmatter name does not match the folder name",
-  issueContentConflict: "Multiple content versions found for this skill",
-  issueMissingFrontmatter: "SKILL.md does not start with valid frontmatter",
-  issueUnreadableSkillMd: "Unable to read SKILL.md"
+  issueBrokenSymlink: "Broken symlink",
+  issueMissingSkillMd: "Missing SKILL.md",
+  issueNameMismatch: "Display name differs from folder name",
+  issueContentConflict: "Multiple different content versions",
+  issueMissingFrontmatter: "Invalid or missing frontmatter",
+  issueUnreadableSkillMd: "Can’t read SKILL.md",
+  issueHintBrokenSymlink: "This skill can’t be used. The target path is missing—repair or remove this entry before syncing.",
+  issueHintContentConflict: "Syncing now may overwrite the wrong copy. Pick one canonical source before import or distribute.",
+  issueHintMissingSkillMd: "Not a valid skill, so sync is unreliable. Add SKILL.md or remove the folder.",
+  issueHintNameMismatch: "Not a content conflict—sync is usually fine. Folder name identifies the path; display name is only for UI. Align them over time.",
+  issueHintMissingFrontmatter: "Body may still exist, but name/description can be wrong. Add a valid YAML header before syncing.",
+  issueHintUnreadableSkillMd: "Content can’t be verified. Check permissions or file damage before syncing.",
+  issueHintDefault: "Check the source path and install state first.",
+  issueHintLocation: "Location: "
 };
 
 const dictionaries: Record<Language, Record<keyof typeof zh, string>> = {
@@ -332,4 +348,19 @@ export function issueLabel(language: Language, code: string, fallback: string): 
   };
   const key = map[code];
   return key ? t(language, key) : fallback;
+}
+
+export function issueHint(language: Language, code: string, path?: string): string {
+  const map: Record<string, TranslationKey> = {
+    "broken-symlink": "issueHintBrokenSymlink",
+    "content-conflict": "issueHintContentConflict",
+    "missing-skill-md": "issueHintMissingSkillMd",
+    "name-mismatch": "issueHintNameMismatch",
+    "missing-frontmatter": "issueHintMissingFrontmatter",
+    "unreadable-skill-md": "issueHintUnreadableSkillMd"
+  };
+  const key = map[code];
+  if (key) return t(language, key);
+  if (path) return `${t(language, "issueHintLocation")}${path}`;
+  return t(language, "issueHintDefault");
 }
