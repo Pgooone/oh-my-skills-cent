@@ -195,90 +195,93 @@ export function SkillsView({
           </div>
 
           <div className="skills-toolbar-actions">
-            {searchOpen && (
-              <div className="searchbox compact">
-                <Search size={16} />
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(event) => onQuery(event.target.value)}
-                  placeholder="搜索 Skill、简介或 Agent"
-                />
+            {isProjectWorkspace ? (
+              <div className="project-toolbar-actions">
+                <button className="project-toolbar-action" onClick={onAddProject} type="button">
+                  关联项目
+                </button>
+                <button className="project-toolbar-action" onClick={onDiscoverProjects} type="button">
+                  扫描发现
+                </button>
               </div>
-            )}
-            <button
-              className={`icon-button plain ${searchOpen ? "active" : ""}`}
-              onClick={() => {
-                setAgentMenuOpen(false);
-                setSearchOpen((open) => !open);
-              }}
-              title="搜索"
-              type="button"
-            >
-              <Search size={18} />
-            </button>
-            <button className="icon-button plain" onClick={onRefresh} title="重新扫描" type="button">
-              <RefreshCw size={17} />
-            </button>
-            <div className="agent-menu-wrap" ref={agentMenuRef}>
-              <button
-                className={`agent-menu-trigger ${agentMenuOpen ? "open" : ""}`}
-                onClick={() => {
-                  setSearchOpen(false);
-                  setAgentMenuOpen((open) => !open);
-                }}
-                type="button"
-              >
-                <span>{selectedAgentLabel}</span>
-                <ChevronDown size={14} />
-              </button>
-              {agentMenuOpen && (
-                <div className="agent-menu" role="menu">
+            ) : (
+              <>
+                {searchOpen && (
+                  <div className="searchbox compact">
+                    <Search size={16} />
+                    <input
+                      autoFocus
+                      value={query}
+                      onChange={(event) => onQuery(event.target.value)}
+                      placeholder="搜索 Skill、简介或 Agent"
+                    />
+                  </div>
+                )}
+                <button
+                  className={`icon-button plain ${searchOpen ? "active" : ""}`}
+                  onClick={() => {
+                    setAgentMenuOpen(false);
+                    setSearchOpen((open) => !open);
+                  }}
+                  title="搜索"
+                  type="button"
+                >
+                  <Search size={18} />
+                </button>
+                <button className="icon-button plain" onClick={onRefresh} title="重新扫描" type="button">
+                  <RefreshCw size={17} />
+                </button>
+                <div className="agent-menu-wrap" ref={agentMenuRef}>
                   <button
-                    className={agentFilter === "all" ? "active" : ""}
+                    className={`agent-menu-trigger ${agentMenuOpen ? "open" : ""}`}
                     onClick={() => {
-                      onAgentFilter("all");
-                      setAgentMenuOpen(false);
+                      setSearchOpen(false);
+                      setAgentMenuOpen((open) => !open);
                     }}
                     type="button"
                   >
-                    <span className="check-col">{agentFilter === "all" && <Check size={13} />}</span>
-                    <span className="menu-label">全部 Agent</span>
-                    <strong>{sourceSkills.length}</strong>
+                    <span>{selectedAgentLabel}</span>
+                    <ChevronDown size={14} />
                   </button>
-                  {agents.map((agent) => (
-                    <button
-                      className={agentFilter === agent.id ? "active" : ""}
-                      key={agent.id}
-                      onClick={() => {
-                        onAgentFilter(agent.id);
-                        setAgentMenuOpen(false);
-                      }}
-                      type="button"
-                    >
-                      <span className="check-col">{agentFilter === agent.id && <Check size={13} />}</span>
-                      <span className="menu-label">{agent.label}</span>
-                      <strong>{agentSkillCount(agent.id, sourceSkills)}</strong>
-                    </button>
-                  ))}
+                  {agentMenuOpen && (
+                    <div className="agent-menu" role="menu">
+                      <button
+                        className={agentFilter === "all" ? "active" : ""}
+                        onClick={() => {
+                          onAgentFilter("all");
+                          setAgentMenuOpen(false);
+                        }}
+                        type="button"
+                      >
+                        <span className="check-col">{agentFilter === "all" && <Check size={13} />}</span>
+                        <span className="menu-label">全部 Agent</span>
+                        <strong>{sourceSkills.length}</strong>
+                      </button>
+                      {agents.map((agent) => (
+                        <button
+                          className={agentFilter === agent.id ? "active" : ""}
+                          key={agent.id}
+                          onClick={() => {
+                            onAgentFilter(agent.id);
+                            setAgentMenuOpen(false);
+                          }}
+                          type="button"
+                        >
+                          <span className="check-col">{agentFilter === agent.id && <Check size={13} />}</span>
+                          <span className="menu-label">{agent.label}</span>
+                          <strong>{agentSkillCount(agent.id, sourceSkills)}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
         {!isProjectNoWorkspace && (
           <div className="skills-summary">
             <span className="skills-summary-text">{tabSummary}</span>
-            {isProjectWorkspace && (
-              <div className="project-summary-actions">
-                <button className="project-summary-action" onClick={onAddProject} type="button">
-                  关联项目
-                </button>
-                <button className="project-summary-action" onClick={onDiscoverProjects} type="button">
-                  扫描发现
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -353,13 +356,17 @@ export function SkillsView({
                       <small>{folder}</small>
                     </span>
                     <em>{stats.skillCount} Skills</em>
-                    <XCircle
-                      size={15}
+                    <span
+                      aria-hidden="true"
+                      className="project-chip-close"
                       onClick={(event) => {
                         event.stopPropagation();
                         onRemoveProject(folder);
                       }}
-                    />
+                      title="取消关联"
+                    >
+                      <XCircle size={15} />
+                    </span>
                   </button>
                 );
               })}
