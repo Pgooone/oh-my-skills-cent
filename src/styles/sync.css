@@ -44,19 +44,15 @@
   background: rgba(255, 255, 255, 0.72);
 }
 
-.choice-card.active {
+.choice-card.active,
+.managed-library-card.active {
   border-color: rgba(47, 111, 237, 0.66);
   background: rgba(255, 255, 255, 0.58);
   box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.14);
 }
 
 .selected-target-card.active {
-  /* selection indicated by checkmark only; no blue border on card */
-}
-
-.choice-card.active strong,
-.selected-target-card.active strong {
-  font-weight: 850;
+  /* selection indicated by checkmark only; no blue border / weight change */
 }
 
 .choice-card > svg,
@@ -217,6 +213,7 @@
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
+  font-weight: 700;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -512,7 +509,7 @@
 }
 
 .sync-action-bar {
-  --sync-action-inset: 18px;
+  --sync-action-inset: 14px;
   position: relative;
   z-index: 2;
   display: flex;
@@ -546,6 +543,7 @@
 }
 
 .action-preview .preview-sep {
+  margin: 0 2px;
   color: rgba(23, 25, 28, 0.35);
   font-size: 11px;
 }
@@ -596,6 +594,18 @@
   min-height: 42px;
   padding: 0 22px;
   font-size: 14px;
+}
+
+/* Keep width after removing trailing → (16px icon + 6px gap). */
+.primary-button.large.sync-preview-action {
+  padding-inline: 33px;
+}
+
+/* Equal width pair; compensate removed execute icon. */
+.button-pair.sync-plan-actions .sync-plan-action {
+  min-width: 148px;
+  justify-content: center;
+  padding-inline: 28px;
 }
 
 .button-pair {

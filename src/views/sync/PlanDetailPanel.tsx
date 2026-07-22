@@ -24,7 +24,8 @@ export function PlanInfoDisclosure({
 
     const viewportMargin = 16;
     const buttonRect = button.getBoundingClientRect();
-    const panelWidth = Math.min(560, Math.max(280, window.innerWidth - viewportMargin * 2));
+    // Fit longest detail line instead of stretching to a fixed wide panel.
+    const panelWidth = estimateDetailPanelWidth(details, window.innerWidth - viewportMargin * 2);
     const minLeft = viewportMargin;
     const maxLeft = Math.max(minLeft, window.innerWidth - panelWidth - viewportMargin);
     const preferredLeft = buttonRect.left;
@@ -58,7 +59,7 @@ export function PlanInfoDisclosure({
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onEsc);
     };
-  }, [open]);
+  }, [open, details]);
 
   return (
     <div className="plan-info-wrap" ref={wrapRef}>
@@ -83,6 +84,35 @@ export function PlanInfoDisclosure({
       )}
     </div>
   );
+}
+
+/** Approximate content width from detail copy; avoids a fixed oversized panel. */
+function estimateDetailPanelWidth(details: PlanDetail[], maxViewport: number) {
+  const measure = (text: string) => {
+    let width = 0;
+    for (const char of text) {
+      width += char.charCodeAt(0) > 255 ? 12 : 7;
+    }
+    return width;
+  };
+
+  let longest = measure("本次没有异常项");
+  for (const item of details) {
+    longest = Math.max(
+      longest,
+      measure(item.skillId),
+      measure(`${item.label} ${item.agentLabel}`) + 36,
+      measure(item.title),
+      measure(item.body),
+      measure(item.path ?? ""),
+      measure(item.backupPath ? `备份到 ${item.backupPath}` : ""),
+      item.canIncludeReplacement ? measure("统一为中心库软链接") + 24 : 0
+    );
+  }
+
+  // Item + panel horizontal padding (~44px).
+  const contentWidth = Math.ceil(longest + 44);
+  return Math.min(Math.max(contentWidth, 260), Math.min(420, maxViewport));
 }
 
 function PlanDetailPanel({

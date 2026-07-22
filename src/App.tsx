@@ -56,6 +56,8 @@ export default function App() {
   const [syncPlanProjectFolders, setSyncPlanProjectFolders] = useState<string[]>([]);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [syncMode, setSyncMode] = useState<SyncMode>("quick");
+  /** Survives skills ↔ sync tab switches; resets only when the app restarts. */
+  const [syncSelectedTargetIds, setSyncSelectedTargetIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState("启动中");
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -724,6 +726,8 @@ export default function App() {
             busy={Boolean(busy)}
             syncMode={syncMode}
             onSyncModeChange={setSyncMode}
+            selectedTargetIds={syncSelectedTargetIds}
+            onSelectedTargetIdsChange={setSyncSelectedTargetIds}
             onRemoveSkill={(id) => {
               setSyncQueuedSkillIds((current) => {
                 const next = new Set(current);

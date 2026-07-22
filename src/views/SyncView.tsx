@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Copy, CopyCheck, FolderPlus, Globe2, Link2, Plus, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Copy, FolderPlus, Globe2, Link2, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "../components/shared";
 import { agentSignalSummary, compactPath, firstValidInstallation, syncPlanSummary } from "../lib/skillUtils";
@@ -31,7 +31,9 @@ export function SyncView({
   onGoSkills,
   onChooseProject,
   syncMode,
-  onSyncModeChange
+  onSyncModeChange,
+  selectedTargetIds,
+  onSelectedTargetIdsChange
 }: {
   agents: AgentRecord[];
   queuedSkills: SkillRecord[];
@@ -48,12 +50,13 @@ export function SyncView({
   onChooseProject: () => Promise<string | null>;
   syncMode: SyncMode;
   onSyncModeChange: (mode: SyncMode) => void;
+  /** Lifted to App so tab switches do not clear agent picks until app restart. */
+  selectedTargetIds: Set<string>;
+  onSelectedTargetIdsChange: (ids: Set<string>) => void;
 }) {
   const [quickMethod, setQuickMethod] = useState<QuickMigrationMethod>("copy");
   const [targetScope, setTargetScope] = useState<"global" | "project">("global");
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
-  // No default selection — user must pick targets intentionally.
-  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(() => new Set());
   const [selectedReplacementKeys, setSelectedReplacementKeys] = useState<Set<string>>(() => new Set());
   const [selectedSkillScrollState, setSelectedSkillScrollState] = useState({ left: false, right: false });
   const [previewDraftKey, setPreviewDraftKey] = useState<string | null>(null);
@@ -62,11 +65,12 @@ export function SyncView({
   const selectedSkillCount = queuedSkills.length;
 
   useEffect(() => {
-    setSelectedTargetIds((current) => {
-      const validIds = new Set(agents.map((agent) => agent.id));
-      return new Set([...current].filter((id) => validIds.has(id)));
-    });
-  }, [agents]);
+    const validIds = new Set(agents.map((agent) => agent.id));
+    const next = new Set([...selectedTargetIds].filter((id) => validIds.has(id)));
+    if (next.size !== selectedTargetIds.size) {
+      onSelectedTargetIdsChange(next);
+    }
+  }, [agents, selectedTargetIds, onSelectedTargetIdsChange]);
 
   const updateSelectedSkillScrollState = () => {
     const element = selectedSkillBarRef.current;
@@ -117,9 +121,7 @@ export function SyncView({
     ? "先选择 Skill 再生成预览"
     : missingProject
     ? "先选择项目"
-    : syncMode === "quick"
-    ? `生成 ${selectedSkillCount} 个快速同步预览`
-    : `生成 ${selectedSkillCount} 个中心库同步预览`;
+    : `生成 ${selectedSkillCount} 个同步预览`;
   const centralPath = selectedSkillCount === 1 && selectedSkill ? `${settings.libraryPath}/${selectedSkill.slug}` : settings.libraryPath;
   const confirmationText = activePlan
     ? planSummarySentence(activePlan, summary, selectedSkillCount)
@@ -139,12 +141,10 @@ export function SyncView({
     : null;
 
   function toggleTarget(agentId: string) {
-    setSelectedTargetIds((current) => {
-      const next = new Set(current);
-      if (next.has(agentId)) next.delete(agentId);
-      else next.add(agentId);
-      return next;
-    });
+    const next = new Set(selectedTargetIds);
+    if (next.has(agentId)) next.delete(agentId);
+    else next.add(agentId);
+    onSelectedTargetIdsChange(next);
   }
 
   async function chooseProjectScope() {
@@ -316,7 +316,7 @@ export function SyncView({
               </SyncSection>
             ) : (
               <SyncSection number="2" title="中心库副本">
-                <div className="managed-library-card">
+                <div className="managed-library-card active">
                   <Link2 size={20} />
                   <span>
                     <strong>先复制到中心库，再用软链接分发到目标 Agent</strong>
@@ -417,25 +417,23 @@ export function SyncView({
           ) : bottomPreviewText ? (
             <div className="action-preview">
               <span className="preview-label">操作预览</span>
-              <span className="preview-sep"> · </span>
+              <span className="preview-sep">{" · "}</span>
               {bottomPreviewText}
             </div>
           ) : null}
           <div className="action-buttons-end">
             {generatedPlan ? (
-              <div className="button-pair">
-                <button className="secondary-button large" disabled={actionDisabled} onClick={() => previewPlan()}>
+              <div className="button-pair sync-plan-actions">
+                <button className="secondary-button large sync-plan-action" disabled={actionDisabled} onClick={() => previewPlan()}>
                   重新生成预览
                 </button>
-                <button className="primary-button large" disabled={!activePlan || blocked || busy || Boolean(applyResult)} onClick={onApply}>
-                  <CopyCheck size={16} />
+                <button className="primary-button large sync-plan-action" disabled={!activePlan || blocked || busy || Boolean(applyResult)} onClick={onApply}>
                   {applyResult ? "执行完成" : "执行同步计划"}
                 </button>
               </div>
             ) : (
-              <button className="primary-button large" disabled={actionDisabled} onClick={() => previewPlan()}>
+              <button className="primary-button large sync-preview-action" disabled={actionDisabled} onClick={() => previewPlan()}>
                 {previewLabel}
-                <ArrowRight size={16} />
               </button>
             )}
           </div>
