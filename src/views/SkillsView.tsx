@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, FolderPlus, Github, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Github, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { AgentEmptyVisual, ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { AgentBadge, AgentIcon, Coverage, IssueList, SkillState } from "../components/shared";
@@ -270,13 +270,11 @@ export function SkillsView({
           <div className="skills-summary">
             <span className="skills-summary-text">{tabSummary}</span>
             {isProjectWorkspace && (
-              <div className="button-pair compact">
-                <button className="secondary-button" onClick={onAddProject} type="button">
-                  <FolderPlus size={16} />
+              <div className="project-summary-actions">
+                <button className="project-summary-action" onClick={onAddProject} type="button">
                   关联项目
                 </button>
-                <button className="secondary-button" onClick={onDiscoverProjects} type="button">
-                  <Search size={16} />
+                <button className="project-summary-action" onClick={onDiscoverProjects} type="button">
                   扫描发现
                 </button>
               </div>
