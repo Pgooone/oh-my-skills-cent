@@ -2,10 +2,6 @@
   body {
     min-width: 980px;
   }
-
-  .skills-page {
-    grid-template-columns: 190px minmax(320px, 1fr) minmax(300px, 0.82fr);
-  }
 }
 
 @media (max-width: 920px) {

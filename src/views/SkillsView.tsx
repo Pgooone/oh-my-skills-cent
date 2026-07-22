@@ -447,7 +447,7 @@ export function SkillsView({
               取消全选
             </button>
           </div>
-          <div className="selection-actions">
+          <div className="selection-actions button-pair">
             <button className="secondary-button large" onClick={onAdoptSelected} type="button">
               {isLibraryWorkspace ? "从中心库同步" : "导入中心库"} {selectedCount} 个
             </button>
