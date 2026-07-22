@@ -19,6 +19,7 @@ pub fn run() {
             commands::read_skill_content,
             commands::read_skill_lock,
             commands::open_path,
+            commands::remove_skill_entries,
             commands::open_url,
             commands::check_skills_sh_update,
             commands::update_skills_sh_skill,

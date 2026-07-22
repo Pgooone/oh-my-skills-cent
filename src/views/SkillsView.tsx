@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, FolderPlus, Github, RefreshCw, Search, XCircle } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, FolderPlus, Github, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { AgentEmptyVisual, ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { AgentBadge, AgentIcon, Coverage, IssueList, SkillState } from "../components/shared";
@@ -28,6 +28,7 @@ export function SkillsView({
   query,
   agentFilter,
   settings,
+  removing,
   onQuery,
   onAgentFilter,
   onWorkspace,
@@ -37,6 +38,8 @@ export function SkillsView({
   onUpdateSkill,
   onAdoptSelected,
   onQuickSyncSelected,
+  onRemoveSelected,
+  onRemovePaths,
   onClearSelection,
   onRefresh,
   onAddProject,
@@ -64,6 +67,7 @@ export function SkillsView({
   query: string;
   agentFilter: string;
   settings: AppSettings;
+  removing: boolean;
   onQuery: (value: string) => void;
   onAgentFilter: (value: string) => void;
   onWorkspace: (value: SkillWorkspace) => void;
@@ -73,6 +77,8 @@ export function SkillsView({
   onUpdateSkill: (skill: SkillRecord) => void;
   onAdoptSelected: () => void;
   onQuickSyncSelected: () => void;
+  onRemoveSelected: () => void;
+  onRemovePaths: (paths: string[]) => void;
   onClearSelection: () => void;
   onRefresh: () => void;
   onAddProject: () => void;
@@ -406,6 +412,8 @@ export function SkillsView({
                         settings={settings}
                         skillLocks={skillLocks}
                         workspace={workspace}
+                        removing={removing}
+                        onRemovePath={workspace === "global" ? onRemovePaths : undefined}
                       />
                     )}
                   </Fragment>
@@ -449,10 +457,20 @@ export function SkillsView({
             </button>
           </div>
           <div className="selection-actions button-pair">
-            <button className="secondary-button large" onClick={onAdoptSelected} type="button">
+            {workspace === "global" && (
+              <button
+                className="secondary-button large selection-bar-action"
+                disabled={removing}
+                onClick={onRemoveSelected}
+                type="button"
+              >
+                {removing ? "移除中…" : "移除"}
+              </button>
+            )}
+            <button className="secondary-button large selection-bar-action" onClick={onAdoptSelected} type="button">
               {isLibraryWorkspace ? "从中心库同步" : "导入中心库"}
             </button>
-            <button className="primary-button large" onClick={onQuickSyncSelected} type="button">
+            <button className="primary-button large selection-bar-action" onClick={onQuickSyncSelected} type="button">
               快速同步
             </button>
           </div>
@@ -703,12 +721,16 @@ function SkillDetail({
   skill,
   settings,
   skillLocks,
-  workspace
+  workspace,
+  removing,
+  onRemovePath
 }: {
   skill: SkillRecord;
   settings: AppSettings;
   skillLocks: Record<string, SkillLockEntry>;
   workspace: SkillWorkspace;
+  removing: boolean;
+  onRemovePath?: (paths: string[]) => void;
 }) {
   const source = skillSourceSummary(skill, skillLocks);
   const pathSections = skillPathSections(skill, workspace);
@@ -717,7 +739,13 @@ function SkillDetail({
     <div className="skill-detail">
       {pathSections.map((section) => (
         <DetailField label={section.label} key={section.label}>
-          <PathList paths={section.paths} showRawPaths={settings.showRawPaths} />
+          <PathList
+            paths={section.paths}
+            showRawPaths={settings.showRawPaths}
+            canRemove={Boolean(onRemovePath) && section.label === "全局路径"}
+            removing={removing}
+            onRemovePath={onRemovePath}
+          />
         </DetailField>
       ))}
 
@@ -769,14 +797,12 @@ function skillPathSections(skill: SkillRecord, workspace: SkillWorkspace): Detai
   }
 
   if (workspace === "global") {
+    // Global workspace only lists machine-level install paths; the central library
+    // copy is managed in the library workspace and should not clutter this detail.
     return compactSections([
       {
         label: "全局路径",
         paths: uniqueInstallationPaths(skill.installations.filter((installation) => installation.scope === "global"))
-      },
-      {
-        label: "中心库路径",
-        paths: skill.canonicalPath ? [{ id: `library:${skill.canonicalPath}`, path: skill.canonicalPath }] : []
       }
     ]);
   }
@@ -810,7 +836,19 @@ function uniqueInstallationPaths(installations: SkillRecord["installations"]) {
   return paths;
 }
 
-function PathList({ paths, showRawPaths }: { paths: DetailPath[]; showRawPaths: boolean }) {
+function PathList({
+  paths,
+  showRawPaths,
+  canRemove = false,
+  removing = false,
+  onRemovePath
+}: {
+  paths: DetailPath[];
+  showRawPaths: boolean;
+  canRemove?: boolean;
+  removing?: boolean;
+  onRemovePath?: (paths: string[]) => void;
+}) {
   return (
     <div className="detail-path-list">
       {paths.map((item) => (
@@ -822,11 +860,25 @@ function PathList({ paths, showRawPaths }: { paths: DetailPath[]; showRawPaths: 
               event.stopPropagation();
               void openPath(item.path);
             }}
-            title="打开路径"
+            title="打开路径（不存在或断链时打开上一级）"
             type="button"
           >
             <FolderOpen size={15} />
           </button>
+          {canRemove && onRemovePath && (
+            <button
+              className="meta-icon-button danger"
+              disabled={removing}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemovePath([item.path]);
+              }}
+              title="删除此路径"
+              type="button"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       ))}
     </div>

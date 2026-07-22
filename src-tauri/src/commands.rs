@@ -75,14 +75,145 @@ pub fn read_skill_lock() -> Result<BTreeMap<String, SkillLockEntry>, String> {
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     let path = fs_ops::expand_home(&path);
-    if !path.exists() {
+    // Broken symlinks and missing entries fail Path::exists() (metadata follows
+    // the link). Fall back to the nearest existing ancestor so users can still
+    // open the skills root in Finder/Explorer and clean up the entry.
+    let open_target = if path.exists() {
+        path
+    } else {
+        existing_ancestor(&path).ok_or_else(|| {
+            format!("Path does not exist: {}", fs_ops::path_to_string(&path))
+        })?
+    };
+
+    tauri_plugin_opener::open_path(&open_target, None::<&str>).map_err(|error| {
+        format!(
+            "Unable to open {}: {error}",
+            fs_ops::path_to_string(&open_target)
+        )
+    })
+}
+
+fn existing_ancestor(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = path.parent()?;
+    loop {
+        if current.as_os_str().is_empty() {
+            return None;
+        }
+        if current.exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveSkillEntriesResult {
+    pub removed: Vec<String>,
+    pub failed: Vec<RemoveSkillEntryFailure>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveSkillEntryFailure {
+    pub path: String,
+    pub error: String,
+}
+
+/// Delete skill installation entries (directories or symlinks) from disk.
+/// Only paths whose parent directory is named `skills` are accepted, so the
+/// command cannot wipe arbitrary folders.
+#[tauri::command]
+pub fn remove_skill_entries(paths: Vec<String>) -> Result<RemoveSkillEntriesResult, String> {
+    if paths.is_empty() {
+        return Err("No paths provided".to_string());
+    }
+
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for raw in paths {
+        let path = fs_ops::expand_home(&raw);
+        let display = fs_ops::path_to_string(&path);
+        if !seen.insert(display.clone()) {
+            continue;
+        }
+
+        if let Err(error) = validate_removable_skill_entry(&path) {
+            failed.push(RemoveSkillEntryFailure {
+                path: display,
+                error,
+            });
+            continue;
+        }
+
+        match fs_ops::remove_entry(&path) {
+            Ok(()) => removed.push(display),
+            Err(error) => failed.push(RemoveSkillEntryFailure {
+                path: display,
+                error,
+            }),
+        }
+    }
+
+    if removed.is_empty() && !failed.is_empty() {
+        return Err(failed
+            .into_iter()
+            .map(|item| format!("{}: {}", item.path, item.error))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+
+    Ok(RemoveSkillEntriesResult { removed, failed })
+}
+
+fn validate_removable_skill_entry(path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("Path must not contain '..'".to_string());
+    }
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "Skill entry must live under a skills directory".to_string())?;
+    let parent_name = parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Skill entry must live under a skills directory".to_string())?;
+    if !parent_name.eq_ignore_ascii_case("skills") {
         return Err(format!(
-            "Path does not exist: {}",
-            fs_ops::path_to_string(&path)
+            "Refusing to delete path outside a skills directory: {}",
+            fs_ops::path_to_string(path)
         ));
     }
-    tauri_plugin_opener::open_path(&path, None::<&str>)
-        .map_err(|error| format!("Unable to open {}: {error}", fs_ops::path_to_string(&path)))
+
+    let entry_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .ok_or_else(|| "Invalid skill entry name".to_string())?;
+    if entry_name.eq_ignore_ascii_case("skills") {
+        return Err("Refusing to delete a skills root directory".to_string());
+    }
+
+    // Accept existing dirs/files and broken symlinks (symlink_metadata succeeds
+    // when the link entry itself is present even if the target is missing).
+    fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "Unable to inspect {}: {error}",
+            fs_ops::path_to_string(path)
+        )
+    })?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -298,4 +429,55 @@ fn resolve_skill_path(repo_path: &Path, slug: &str, skill_path: Option<&str>) ->
 fn is_agents_skill_path(path: &Path, slug: &str) -> bool {
     let expected_suffix = PathBuf::from(".agents").join("skills").join(slug);
     path.ends_with(expected_suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn refuses_paths_outside_skills_directory() {
+        let temp = tempfile::tempdir().expect("temp");
+        let path = temp.path().join("not-skills").join("foo");
+        fs::create_dir_all(&path).expect("create");
+        let err = validate_removable_skill_entry(&path).expect_err("should refuse");
+        assert!(err.contains("outside a skills directory"), "{err}");
+    }
+
+    #[test]
+    fn removes_skill_entry_under_skills_root() {
+        let temp = tempfile::tempdir().expect("temp");
+        let skills = temp.path().join("skills");
+        let entry = skills.join("demo-skill");
+        fs::create_dir_all(&entry).expect("create skill");
+        fs::write(entry.join("SKILL.md"), "---\nname: demo\n---\n").expect("write");
+
+        let result = remove_skill_entries(vec![fs_ops::path_to_string(&entry)]).expect("remove");
+        assert_eq!(result.removed.len(), 1);
+        assert!(!entry.exists());
+        assert!(skills.exists());
+    }
+
+    #[test]
+    fn removes_broken_symlink_skill_entry() {
+        let temp = tempfile::tempdir().expect("temp");
+        let skills = temp.path().join("skills");
+        fs::create_dir_all(&skills).expect("skills root");
+        let entry = skills.join("broken-skill");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(temp.path().join("missing-target"), &entry)
+                .expect("broken symlink");
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-unix CI, create a normal dir so the command path still runs.
+            fs::create_dir_all(&entry).expect("entry");
+        }
+
+        let result = remove_skill_entries(vec![fs_ops::path_to_string(&entry)]).expect("remove");
+        assert_eq!(result.removed.len(), 1);
+        assert!(fs::symlink_metadata(&entry).is_err());
+    }
 }

@@ -1076,6 +1076,28 @@
   gap: 8px;
 }
 
+/* Match 「导入中心库」 width for 移除 / 导入中心库 / 快速同步. */
+.selection-actions .selection-bar-action {
+  min-width: 112px;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+/* Delete stays neutral by default; danger only on hover. */
+.meta-icon-button.danger {
+  color: #2f3338;
+}
+
+.meta-icon-button.danger:hover {
+  background: rgba(186, 67, 47, 0.14);
+  color: #ba432f;
+}
+
+.meta-icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .detail-field {
   display: grid;
   grid-template-columns: 82px minmax(0, 1fr);
@@ -1135,15 +1157,24 @@
 }
 
 .meta-icon-button {
-  display: grid;
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
-  place-items: center;
+  padding: 0;
+  border: 0;
   border-radius: 7px;
   background: rgba(24, 26, 29, 0.07);
   color: #2f3338;
+  line-height: 0;
   cursor: pointer;
+}
+
+.meta-icon-button svg {
+  display: block;
+  flex: 0 0 auto;
 }
 
 .meta-icon-button:hover {

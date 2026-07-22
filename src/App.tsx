@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentDiscoveryEmptyState } from "./components/AgentDiscoveryEmptyState";
@@ -7,7 +7,7 @@ import { SettingsSheet } from "./components/SettingsSheet";
 import { TabButton } from "./components/TabButton";
 import { demoBatchPlan, demoInventory, demoSkillLocks } from "./lib/demoData";
 import { isTauriRuntime } from "./lib/runtime";
-import { aggregateSkillsBySlug, failedUpdateCheck, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
+import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
 import type { QuickMigrationMethod, SkillWorkspace, SyncMode, View } from "./uiTypes";
 import { SkillsView } from "./views/SkillsView";
 import { SyncView } from "./views/SyncView";
@@ -52,6 +52,7 @@ export default function App() {
   const [syncQueuedSkillIds, setSyncQueuedSkillIds] = useState<Set<string>>(new Set());
   const [skillUpdateChecks, setSkillUpdateChecks] = useState<Record<string, SkillUpdateCheck>>({});
   const [updatingSkillIds, setUpdatingSkillIds] = useState<Set<string>>(new Set());
+  const [removing, setRemoving] = useState(false);
   const [syncPlan, setSyncPlan] = useState<SyncPlan | null>(null);
   const [syncPlanProjectFolders, setSyncPlanProjectFolders] = useState<string[]>([]);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -624,6 +625,59 @@ export default function App() {
     }
   }
 
+  async function removeGlobalPaths(paths: string[]) {
+    const uniquePaths = uniqueGlobalPaths(paths);
+    if (uniquePaths.length === 0 || removing) return;
+
+    const preview = uniquePaths
+      .slice(0, 8)
+      .map((path) => compactPath(path))
+      .join("\n");
+    const more = uniquePaths.length > 8 ? `\n…另有 ${uniquePaths.length - 8} 个路径` : "";
+    const confirmed = await askConfirm(
+      uniquePaths.length === 1
+        ? `确定删除以下全局路径吗？\n\n${preview}\n\n此操作不可撤销。`
+        : `确定删除以下 ${uniquePaths.length} 个全局路径吗？\n\n${preview}${more}\n\n此操作不可撤销。`,
+      "确认移除"
+    );
+    if (!confirmed) return;
+
+    setRemoving(true);
+    setBusy(uniquePaths.length === 1 ? "正在移除路径" : `正在移除 ${uniquePaths.length} 个路径`);
+    setError(null);
+    try {
+      if (!isTauriRuntime()) {
+        setToast("演示模式无法删除本机路径");
+        return;
+      }
+      const result = await invoke<{ removed: string[]; failed: { path: string; error: string }[] }>(
+        "remove_skill_entries",
+        { paths: uniquePaths }
+      );
+      if (result.failed.length > 0) {
+        setError(result.failed.map((item) => `${compactPath(item.path)}：${item.error}`).join("；"));
+      }
+      if (result.removed.length > 0) {
+        setToast(
+          result.removed.length === 1
+            ? `已移除 ${compactPath(result.removed[0])}`
+            : `已移除 ${result.removed.length} 个路径`
+        );
+      }
+      await refreshInventory();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setRemoving(false);
+      setBusy("");
+    }
+  }
+
+  async function removeSelectedGlobalSkills() {
+    const paths = selectedSkills.flatMap((skill) => globalInstallationPaths(skill));
+    await removeGlobalPaths(paths);
+  }
+
   return (
     <main className="app-shell">
       <header className="top-nav">
@@ -687,6 +741,7 @@ export default function App() {
             query={query}
             agentFilter={agentFilter}
             settings={settings}
+            removing={removing}
             onQuery={setQuery}
             onAgentFilter={setAgentFilter}
             onWorkspace={(workspace) => {
@@ -706,6 +761,8 @@ export default function App() {
             onUpdateSkill={updateSkillsShSkill}
             onAdoptSelected={() => openSelectedSkillsSync("managed")}
             onQuickSyncSelected={() => openSelectedSkillsSync("quick")}
+            onRemoveSelected={() => void removeSelectedGlobalSkills()}
+            onRemovePaths={(paths) => void removeGlobalPaths(paths)}
             onClearSelection={clearSelectedSkills}
             onRefresh={() => void refreshInventory()}
             onAddProject={() => void addProjectWorkspace()}
@@ -787,6 +844,36 @@ function selectionParts(key: string) {
 
 function selectionSkillId(key: string) {
   return selectionParts(key).skillId;
+}
+
+function globalInstallationPaths(skill: SkillRecord) {
+  const paths: string[] = [];
+  for (const installation of skill.installations) {
+    if (installation.scope !== "global" || !installation.entryPath) continue;
+    if (paths.some((path) => samePath(path, installation.entryPath))) continue;
+    paths.push(installation.entryPath);
+  }
+  return paths;
+}
+
+function uniqueGlobalPaths(paths: string[]) {
+  const unique: string[] = [];
+  for (const path of paths) {
+    if (!path.trim()) continue;
+    if (unique.some((item) => samePath(item, path))) continue;
+    unique.push(path);
+  }
+  return unique;
+}
+
+async function askConfirm(message: string, title: string) {
+  if (!isTauriRuntime()) {
+    return window.confirm(message);
+  }
+  return confirm(message, {
+    title,
+    kind: "warning"
+  });
 }
 
 function projectFoldersFromTargets(targets: AgentTarget[]) {
