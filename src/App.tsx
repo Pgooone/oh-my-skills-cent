@@ -7,7 +7,7 @@ import { SettingsSheet } from "./components/SettingsSheet";
 import { TabButton } from "./components/TabButton";
 import { demoBatchPlan, demoInventory, demoSkillLocks } from "./lib/demoData";
 import { isTauriRuntime } from "./lib/runtime";
-import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
+import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibraryReference, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
 import type { QuickMigrationMethod, SkillWorkspace, SyncMode, View } from "./uiTypes";
 import { SkillsView } from "./views/SkillsView";
 import { SyncView } from "./views/SyncView";
@@ -625,8 +625,8 @@ export default function App() {
     }
   }
 
-  async function removeGlobalPaths(paths: string[]) {
-    const uniquePaths = uniqueGlobalPaths(paths);
+  async function removeSkillPaths(paths: string[], options?: { confirmMessage?: string }) {
+    const uniquePaths = uniqueSkillPaths(paths);
     if (uniquePaths.length === 0 || removing) return;
 
     const preview = uniquePaths
@@ -634,12 +634,10 @@ export default function App() {
       .map((path) => compactPath(path))
       .join("\n");
     const more = uniquePaths.length > 8 ? `\n…另有 ${uniquePaths.length - 8} 个路径` : "";
-    const confirmed = await askConfirm(
-      uniquePaths.length === 1
-        ? `确定删除以下全局路径吗？\n\n${preview}\n\n此操作不可撤销。`
-        : `确定删除以下 ${uniquePaths.length} 个全局路径吗？\n\n${preview}${more}\n\n此操作不可撤销。`,
-      "确认移除"
-    );
+    const defaultMessage = uniquePaths.length === 1
+      ? `确定删除以下路径吗？\n\n${preview}\n\n此操作不可撤销。`
+      : `确定删除以下 ${uniquePaths.length} 个路径吗？\n\n${preview}${more}\n\n此操作不可撤销。`;
+    const confirmed = await askConfirm(options?.confirmMessage ?? defaultMessage, "确认移除");
     if (!confirmed) return;
 
     setRemoving(true);
@@ -673,9 +671,26 @@ export default function App() {
     }
   }
 
-  async function removeSelectedGlobalSkills() {
-    const paths = selectedSkills.flatMap((skill) => globalInstallationPaths(skill));
-    await removeGlobalPaths(paths);
+  async function removeSelectedWorkspaceSkills() {
+    const paths = selectedSkills.flatMap((skill) => removablePathsForSkill(skill, skillWorkspace));
+    const libraryCascade = skillWorkspace === "library"
+      && selectedSkills.some((skill) => libraryReferencePaths(skill).length > 0);
+    const confirmMessage = libraryCascade
+      ? `确定移除已选 ${selectedSkills.length} 个 Skill 的中心库副本，并一并删除其引用位置吗？\n\n共 ${uniqueSkillPaths(paths).length} 个路径。此操作不可撤销。`
+      : undefined;
+    await removeSkillPaths(paths, { confirmMessage });
+  }
+
+  function removeDetailPaths(skill: SkillRecord, paths: string[]) {
+    const expanded = paths.flatMap((path) => expandRemovalPaths(skill, path, skillWorkspace));
+    const hitsLibrary = skillWorkspace === "library"
+      && skill.canonicalPath
+      && paths.some((path) => samePath(path, skill.canonicalPath!));
+    const refCount = libraryReferencePaths(skill).length;
+    const confirmMessage = hitsLibrary && refCount > 0
+      ? `确定删除中心库路径，并一并删除 ${refCount} 个引用位置吗？\n\n${uniqueSkillPaths(expanded).map((path) => compactPath(path)).join("\n")}\n\n此操作不可撤销。`
+      : undefined;
+    void removeSkillPaths(expanded, { confirmMessage });
   }
 
   return (
@@ -761,8 +776,8 @@ export default function App() {
             onUpdateSkill={updateSkillsShSkill}
             onAdoptSelected={() => openSelectedSkillsSync("managed")}
             onQuickSyncSelected={() => openSelectedSkillsSync("quick")}
-            onRemoveSelected={() => void removeSelectedGlobalSkills()}
-            onRemovePaths={(paths) => void removeGlobalPaths(paths)}
+            onRemoveSelected={() => void removeSelectedWorkspaceSkills()}
+            onRemovePaths={(skill, paths) => removeDetailPaths(skill, paths)}
             onClearSelection={clearSelectedSkills}
             onRefresh={() => void refreshInventory()}
             onAddProject={() => void addProjectWorkspace()}
@@ -846,17 +861,48 @@ function selectionSkillId(key: string) {
   return selectionParts(key).skillId;
 }
 
-function globalInstallationPaths(skill: SkillRecord) {
+function removablePathsForSkill(skill: SkillRecord, workspace: SkillWorkspace) {
+  if (workspace === "global") return scopedInstallationPaths(skill, "global");
+  if (workspace === "project") return scopedInstallationPaths(skill, "project");
+  // Library: central copy + all symlink references that point at it.
+  return uniqueSkillPaths([
+    ...(skill.canonicalPath ? [skill.canonicalPath] : []),
+    ...libraryReferencePaths(skill)
+  ]);
+}
+
+function expandRemovalPaths(skill: SkillRecord, path: string, workspace: SkillWorkspace) {
+  if (
+    workspace === "library"
+    && skill.canonicalPath
+    && samePath(path, skill.canonicalPath)
+  ) {
+    return uniqueSkillPaths([skill.canonicalPath, ...libraryReferencePaths(skill)]);
+  }
+  return [path];
+}
+
+function scopedInstallationPaths(skill: SkillRecord, scope: "global" | "project") {
   const paths: string[] = [];
   for (const installation of skill.installations) {
-    if (installation.scope !== "global" || !installation.entryPath) continue;
+    if (installation.scope !== scope || !installation.entryPath) continue;
     if (paths.some((path) => samePath(path, installation.entryPath))) continue;
     paths.push(installation.entryPath);
   }
   return paths;
 }
 
-function uniqueGlobalPaths(paths: string[]) {
+function libraryReferencePaths(skill: SkillRecord) {
+  const paths: string[] = [];
+  for (const installation of skill.installations) {
+    if (!installation.entryPath || !isCentralLibraryReference(skill, installation)) continue;
+    if (paths.some((path) => samePath(path, installation.entryPath))) continue;
+    paths.push(installation.entryPath);
+  }
+  return paths;
+}
+
+function uniqueSkillPaths(paths: string[]) {
   const unique: string[] = [];
   for (const path of paths) {
     if (!path.trim()) continue;

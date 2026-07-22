@@ -78,7 +78,7 @@ export function SkillsView({
   onAdoptSelected: () => void;
   onQuickSyncSelected: () => void;
   onRemoveSelected: () => void;
-  onRemovePaths: (paths: string[]) => void;
+  onRemovePaths: (skill: SkillRecord, paths: string[]) => void;
   onClearSelection: () => void;
   onRefresh: () => void;
   onAddProject: () => void;
@@ -413,7 +413,7 @@ export function SkillsView({
                         skillLocks={skillLocks}
                         workspace={workspace}
                         removing={removing}
-                        onRemovePath={workspace === "global" ? onRemovePaths : undefined}
+                        onRemovePath={onRemovePaths}
                       />
                     )}
                   </Fragment>
@@ -457,16 +457,14 @@ export function SkillsView({
             </button>
           </div>
           <div className="selection-actions button-pair">
-            {workspace === "global" && (
-              <button
-                className="secondary-button large selection-bar-action"
-                disabled={removing}
-                onClick={onRemoveSelected}
-                type="button"
-              >
-                {removing ? "移除中…" : "移除"}
-              </button>
-            )}
+            <button
+              className="secondary-button large selection-bar-action"
+              disabled={removing}
+              onClick={onRemoveSelected}
+              type="button"
+            >
+              {removing ? "移除中…" : "移除"}
+            </button>
             <button className="secondary-button large selection-bar-action" onClick={onAdoptSelected} type="button">
               {isLibraryWorkspace ? "从中心库同步" : "导入中心库"}
             </button>
@@ -730,10 +728,11 @@ function SkillDetail({
   skillLocks: Record<string, SkillLockEntry>;
   workspace: SkillWorkspace;
   removing: boolean;
-  onRemovePath?: (paths: string[]) => void;
+  onRemovePath?: (skill: SkillRecord, paths: string[]) => void;
 }) {
   const source = skillSourceSummary(skill, skillLocks);
   const pathSections = skillPathSections(skill, workspace);
+  const removableLabels = removablePathLabels(workspace);
 
   return (
     <div className="skill-detail">
@@ -742,9 +741,9 @@ function SkillDetail({
           <PathList
             paths={section.paths}
             showRawPaths={settings.showRawPaths}
-            canRemove={Boolean(onRemovePath) && section.label === "全局路径"}
+            canRemove={Boolean(onRemovePath) && removableLabels.has(section.label)}
             removing={removing}
-            onRemovePath={onRemovePath}
+            onRemovePath={onRemovePath ? (paths) => onRemovePath(skill, paths) : undefined}
           />
         </DetailField>
       ))}
@@ -782,6 +781,13 @@ function SkillDetail({
 type DetailPath = { id: string; path: string };
 type DetailPathSection = { label: string; paths: DetailPath[] };
 
+function removablePathLabels(workspace: SkillWorkspace) {
+  if (workspace === "global") return new Set(["全局路径"]);
+  if (workspace === "project") return new Set(["项目路径"]);
+  // Library: only the central copy is removable; references are cascade-deleted with it.
+  return new Set(["中心库路径"]);
+}
+
 function skillPathSections(skill: SkillRecord, workspace: SkillWorkspace): DetailPathSection[] {
   if (workspace === "library") {
     return compactSections([
@@ -807,14 +813,11 @@ function skillPathSections(skill: SkillRecord, workspace: SkillWorkspace): Detai
     ]);
   }
 
+  // Project workspace focuses on project-level installs only.
   return compactSections([
     {
       label: "项目路径",
       paths: uniqueInstallationPaths(skill.installations.filter((installation) => installation.scope === "project"))
-    },
-    {
-      label: "中心库路径",
-      paths: skill.canonicalPath ? [{ id: `library:${skill.canonicalPath}`, path: skill.canonicalPath }] : []
     }
   ]);
 }
