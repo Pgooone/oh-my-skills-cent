@@ -2,24 +2,15 @@ import type { AgentRecord, SyncOperation, SyncPlan, SyncReplacement } from "../.
 
 export type PlanDetail = {
   kind: "blocked" | "attention";
-  title: string;
-  body: string;
   label: string;
   skillId: string;
   agentLabel: string;
+  /** Second-line outcome; does not repeat agent. */
+  summary: string;
   path?: string;
-  backupPath?: string;
   operation?: SyncOperation;
   canIncludeReplacement?: boolean;
 };
-
-export function groupDetailsBySkill(items: PlanDetail[]) {
-  const groups = new Map<string, PlanDetail[]>();
-  for (const item of items) {
-    groups.set(item.skillId, [...(groups.get(item.skillId) ?? []), item]);
-  }
-  return Array.from(groups.entries());
-}
 
 export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDetail[] {
   const agentLabels = new Map(agents.map((agent) => [agent.id, agent.label]));
@@ -30,11 +21,10 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
     if (operation.opType === "content-conflict") {
       return [{
         kind: "blocked",
-        title: `${agentLabel} 里已有同名 Skill，但内容和来源不同`,
-        body: "为避免覆盖你的修改，本次不会执行。",
         label: "内容冲突",
         skillId,
         agentLabel,
+        summary: "已有同名且内容不同，本次不会执行",
         path: operation.targetPath,
         operation
       }];
@@ -42,11 +32,10 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
     if (operation.opType === "invalid-entry") {
       return [{
         kind: "blocked",
-        title: `${agentLabel} 的目标入口无效或不可读取`,
-        body: "本次不会执行，请先检查目标位置。",
         label: "无效入口",
         skillId,
         agentLabel,
+        summary: "入口无效或不可读取，本次不会执行",
         path: operation.targetPath,
         operation
       }];
@@ -54,13 +43,10 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
     if (operation.opType === "same-content-existing") {
       return [{
         kind: "attention",
-        title: `${agentLabel} 里已有同名 Skill，内容相同`,
-        body: canIncludeReplacement
-          ? "已保留原入口，不会替换为中心库软链接。"
-          : "已保留原入口，不会替换为软链接。",
         label: "已有相同内容",
         skillId,
         agentLabel,
+        summary: "已保留原入口",
         path: operation.targetPath,
         operation,
         canIncludeReplacement
@@ -69,24 +55,21 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
     if (operation.opType === "backup-existing") {
       return [{
         kind: "attention",
-        title: `${agentLabel} 里的同名 Skill 将备份后替换`,
-        body: "会先移到 Oh My Skills 的备份目录，再替换为中心库软链接。",
         label: "备份后替换",
         skillId,
         agentLabel,
+        summary: "将备份后替换为中心库软链接",
         path: operation.targetPath,
-        backupPath: operation.backupPath,
         operation
       }];
     }
     if (operation.opType === "remove-existing") {
       return [{
         kind: "attention",
-        title: `${agentLabel} 里的目标位置是失效软链接`,
-        body: "将移除旧入口并重新创建。",
         label: "修复失效链接",
         skillId,
         agentLabel,
+        summary: "将移除旧入口并重新创建",
         path: operation.targetPath,
         operation
       }];
@@ -94,11 +77,10 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
     if (operation.opType === "create-root") {
       return [{
         kind: "attention",
-        title: `${agentLabel} 的目标 Skills 目录不存在`,
-        body: "将先创建目录，再同步这个 Skill。",
         label: "创建目录",
         skillId,
         agentLabel,
+        summary: "将先创建 Skills 目录",
         path: operation.targetPath,
         operation
       }];
@@ -109,17 +91,40 @@ export function buildPlanDetails(plan: SyncPlan, agents: AgentRecord[]): PlanDet
   if (plan.blockedConflicts.length > 0 && !hasBlockedDetail) {
     return [
       ...details,
-      ...plan.blockedConflicts.map((message, index) => ({
-        kind: "blocked" as const,
-        title: message,
-        body: "本次不会执行，请先处理这个问题。",
-        label: "不可执行",
-        skillId: `问题 ${index + 1}`,
-        agentLabel: "目标"
-      }))
+      ...plan.blockedConflicts.map((message, index) => {
+        const parsed = parseBlockedConflict(message, index);
+        return {
+          kind: "blocked" as const,
+          label: "不可执行",
+          skillId: parsed.skillId,
+          agentLabel: "目标",
+          summary: parsed.summary
+        };
+      })
     ];
   }
   return details;
+}
+
+function parseBlockedConflict(message: string, index: number): { skillId: string; summary: string } {
+  const notImported = message.match(/^([\w.@/+\-]+)\s+is not imported into the central library yet\.?$/i);
+  if (notImported) {
+    return {
+      skillId: notImported[1],
+      summary: "尚未导入中心库，本次不会执行"
+    };
+  }
+  return {
+    skillId: `问题 ${index + 1}`,
+    summary: message.trim() || "本次不会执行，请先处理这个问题"
+  };
+}
+
+export function detailPrimaryLine(item: PlanDetail): string {
+  if (item.agentLabel === "目标") {
+    return `${item.label} · ${item.skillId}`;
+  }
+  return `${item.label} · ${item.skillId} → ${item.agentLabel}`;
 }
 
 export function replacementKey(agentId: string, skillId: string, targetPath: string) {

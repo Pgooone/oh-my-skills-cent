@@ -1,8 +1,7 @@
 import { Info } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { compactPath } from "../../lib/skillUtils";
 import type { SyncOperation } from "../../types";
-import { groupDetailsBySkill, type PlanDetail } from "./syncPlanDetails";
+import { detailPrimaryLine, type PlanDetail } from "./syncPlanDetails";
 
 export function PlanInfoDisclosure({
   details,
@@ -24,7 +23,6 @@ export function PlanInfoDisclosure({
 
     const viewportMargin = 16;
     const buttonRect = button.getBoundingClientRect();
-    // Fit longest detail line instead of stretching to a fixed wide panel.
     const panelWidth = estimateDetailPanelWidth(details, window.innerWidth - viewportMargin * 2);
     const minLeft = viewportMargin;
     const maxLeft = Math.max(minLeft, window.innerWidth - panelWidth - viewportMargin);
@@ -86,7 +84,6 @@ export function PlanInfoDisclosure({
   );
 }
 
-/** Approximate content width from detail copy; avoids a fixed oversized panel. */
 function estimateDetailPanelWidth(details: PlanDetail[], maxViewport: number) {
   const measure = (text: string) => {
     let width = 0;
@@ -96,21 +93,16 @@ function estimateDetailPanelWidth(details: PlanDetail[], maxViewport: number) {
     return width;
   };
 
-  let longest = measure("本次没有异常项");
+  let longest = measure("本次没有需处理项");
   for (const item of details) {
     longest = Math.max(
       longest,
-      measure(item.skillId),
-      measure(`${item.label} ${item.agentLabel}`) + 36,
-      measure(item.title),
-      measure(item.body),
-      measure(item.path ?? ""),
-      measure(item.backupPath ? `备份到 ${item.backupPath}` : ""),
+      measure(detailPrimaryLine(item)),
+      measure(item.summary),
       item.canIncludeReplacement ? measure("统一为中心库软链接") + 24 : 0
     );
   }
 
-  // Item + panel horizontal padding (~44px).
   const contentWidth = Math.ceil(longest + 44);
   return Math.min(Math.max(contentWidth, 260), Math.min(420, maxViewport));
 }
@@ -129,18 +121,25 @@ function PlanDetailPanel({
   const blockedItems = details.filter((item) => item.kind === "blocked");
   const attentionItems = details.filter((item) => item.kind === "attention");
   const hasDetails = details.length > 0;
+  const countParts = [
+    blockedItems.length > 0 ? `需处理 ${blockedItems.length}` : null,
+    attentionItems.length > 0 ? `需注意 ${attentionItems.length}` : null
+  ].filter(Boolean);
 
   return (
     <div className="plan-detail-panel" role="dialog" aria-label="同步明细" style={style}>
       {!hasDetails ? (
         <div className="plan-detail-empty">
-          <strong>本次没有异常项</strong>
+          <strong>本次没有需处理项</strong>
           <span>所有目标都可以按预览执行。</span>
         </div>
       ) : (
         <>
+          {countParts.length > 0 && (
+            <div className="plan-detail-count-bar">{countParts.join(" · ")}</div>
+          )}
           {blockedItems.length > 0 && (
-            <PlanDetailGroup title="需要处理" items={blockedItems} onIncludeReplacement={onIncludeReplacement} busy={busy} />
+            <PlanDetailGroup title="需处理" items={blockedItems} onIncludeReplacement={onIncludeReplacement} busy={busy} />
           )}
           {attentionItems.length > 0 && (
             <PlanDetailGroup title="需注意" items={attentionItems} onIncludeReplacement={onIncludeReplacement} busy={busy} />
@@ -162,36 +161,27 @@ function PlanDetailGroup({
   onIncludeReplacement: (operation: SyncOperation) => void;
   busy: boolean;
 }) {
-  const grouped = groupDetailsBySkill(items);
   return (
     <div className="plan-detail-group">
       <strong className="plan-detail-group-title">{title}</strong>
-      {grouped.map(([skillId, skillItems]) => (
-        <div className="plan-detail-skill" key={`${title}-${skillId}`}>
-          <div className="plan-detail-skill-title">{skillId}</div>
-          <div className="plan-detail-items">
-            {skillItems.map((item) => (
-              <div className={`plan-detail-item ${item.kind}`} key={`${item.kind}-${item.agentLabel}-${item.skillId}-${item.label}-${item.path ?? ""}`}>
-                <div className="plan-detail-item-main">
-                  <div className="plan-detail-item-meta">
-                    <span className="plan-detail-item-label">{item.label}</span>
-                    <span className="plan-detail-item-agent">{item.agentLabel}</span>
-                  </div>
-                  <strong className="plan-detail-item-title">{item.title}</strong>
-                  <p className="plan-detail-item-body">{item.body}</p>
-                  {item.path && <code className="plan-detail-item-path" title={item.path}>{compactPath(item.path)}</code>}
-                  {item.backupPath && <code className="plan-detail-item-path" title={item.backupPath}>备份到 {compactPath(item.backupPath)}</code>}
-                </div>
-                {item.canIncludeReplacement && item.operation && (
-                  <button className="secondary-button compact" disabled={busy} type="button" onClick={() => onIncludeReplacement(item.operation!)}>
-                    统一为中心库软链接
-                  </button>
-                )}
-              </div>
-            ))}
+      <div className="plan-detail-items">
+        {items.map((item) => (
+          <div
+            className={`plan-detail-item ${item.kind}`}
+            key={`${item.kind}-${item.agentLabel}-${item.skillId}-${item.label}-${item.path ?? ""}-${item.summary}`}
+          >
+            <div className="plan-detail-item-main">
+              <div className="plan-detail-item-primary">{detailPrimaryLine(item)}</div>
+              <p className="plan-detail-item-summary">{item.summary}</p>
+            </div>
+            {item.canIncludeReplacement && item.operation && (
+              <button className="secondary-button compact" disabled={busy} type="button" onClick={() => onIncludeReplacement(item.operation!)}>
+                统一为中心库软链接
+              </button>
+            )}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
