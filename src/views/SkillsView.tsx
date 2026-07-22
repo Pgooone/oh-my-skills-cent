@@ -713,8 +713,11 @@ function SkillReferenceCell({ skill }: { skill: SkillRecord }) {
 
   return (
     <div className={`skill-reference-cell ${summary.total === 0 ? "empty" : ""}`} title={detail}>
-      <strong>{summary.total}</strong>
-      <span>{summary.total === 0 ? "未引用" : "个位置"}</span>
+      {summary.total === 0 ? (
+        <span>未引用</span>
+      ) : (
+        <span>{summary.total} 个位置</span>
+      )}
       {summary.total > 0 && <small>{detail}</small>}
     </div>
   );
@@ -789,8 +792,8 @@ type DetailPathSection = { label: string; paths: DetailPath[] };
 function removablePathLabels(workspace: SkillWorkspace) {
   if (workspace === "global") return new Set(["全局路径"]);
   if (workspace === "project") return new Set(["项目路径"]);
-  // Library: only the central copy is removable; references are cascade-deleted with it.
-  return new Set(["中心库路径"]);
+  // Library: central copy (cascades refs when deleted) + individual reference paths.
+  return new Set(["中心库路径", "引用位置"]);
 }
 
 function skillPathSections(skill: SkillRecord, workspace: SkillWorkspace): DetailPathSection[] {
