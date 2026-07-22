@@ -1,0 +1,167 @@
+/* Sync plan detail disclosure (bottom action bar info panel). */
+
+.plan-info-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.plan-info-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(24, 26, 29, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(23, 25, 28, 0.58);
+  cursor: pointer;
+}
+
+.plan-info-button:hover,
+.plan-info-button.active {
+  color: var(--app-text);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.plan-detail-panel {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(24, 26, 29, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 70px rgba(22, 24, 26, 0.16);
+}
+
+.plan-detail-empty {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: rgba(23, 25, 28, 0.58);
+}
+
+.plan-detail-empty strong,
+.plan-detail-group-title {
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.plan-detail-group {
+  display: grid;
+  gap: 10px;
+}
+
+.plan-detail-skill {
+  display: grid;
+  gap: 6px;
+}
+
+.plan-detail-skill-title {
+  color: rgba(23, 25, 28, 0.52);
+  font-size: 11px;
+  font-weight: 820;
+  line-height: 1.3;
+}
+
+.plan-detail-items {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-detail-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid rgba(24, 26, 29, 0.08);
+  border-radius: 8px;
+  background: rgba(246, 247, 248, 0.72);
+}
+
+.plan-detail-item .secondary-button.compact {
+  justify-self: start;
+}
+
+.plan-detail-item.blocked {
+  background: rgba(190, 62, 49, 0.08);
+}
+
+.plan-detail-item.attention {
+  background: rgba(206, 132, 39, 0.08);
+}
+
+.plan-detail-item-main {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.plan-detail-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.plan-detail-item-label {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(24, 26, 29, 0.08);
+  color: rgba(23, 25, 28, 0.62);
+  font-size: 10px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.plan-detail-item-agent {
+  min-width: 0;
+  color: rgba(23, 25, 28, 0.52);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.plan-detail-item-title {
+  min-width: 0;
+  color: var(--app-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.plan-detail-item-body {
+  margin: 0;
+  color: rgba(23, 25, 28, 0.62);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.plan-detail-item-path {
+  display: block;
+  min-width: 0;
+  color: rgba(23, 25, 28, 0.48);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.plan-detail-item p {
+  margin: 0;
+}
+
+.plan-detail-item code {
+  color: rgba(23, 25, 28, 0.48);
+  font-size: 10px;
+}
