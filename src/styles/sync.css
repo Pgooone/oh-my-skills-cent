@@ -240,10 +240,6 @@
   min-width: 90px;
 }
 
-.sync-mode-tabs button:last-child {
-  min-width: 148px;
-}
-
 .sync-mode-header {
   display: grid;
   gap: 10px;
@@ -368,7 +364,7 @@
 }
 
 .managed-library-card {
-  width: 420px;
+  width: 100%;
   max-width: 100%;
   height: 56px;
   padding: 8px 10px;
@@ -376,6 +372,7 @@
 
 .managed-library-card > span {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -387,17 +384,6 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.managed-library-card em {
-  flex: 0 0 auto;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: rgba(35, 139, 105, 0.12);
-  color: #116149;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 850;
 }
 
 .option-grid {

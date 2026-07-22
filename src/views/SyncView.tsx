@@ -205,7 +205,7 @@ export function SyncView({
                 type="button"
                 aria-selected={syncMode === "managed"}
               >
-                导入中心库并同步
+                中心库同步
               </button>
             </div>
           </div>
@@ -311,7 +311,6 @@ export function SyncView({
                     <strong>先复制到中心库，再用软链接分发到目标 Agent</strong>
                     <code title={centralPath}>{centralPath ? compactPath(centralPath) : "等待选择 Skill"}</code>
                   </span>
-                  <em>将创建/确认</em>
                 </div>
               </SyncSection>
             )}
