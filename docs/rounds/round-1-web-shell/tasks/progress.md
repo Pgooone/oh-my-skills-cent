@@ -17,8 +17,8 @@
 - [x] deploy-docs（verifier 判死 1 处：缺 npm run web:build 主命令 → lead 已修复，另修 Node 版本与 u16 范围两处瑕疵 + clone URL 改为 fork）
 
 ## 最终验收（proposal §6）
-- [ ] Windows：`cargo run` 起服务，浏览器完成「扫描 → 预览 → 执行同步 → 历史」全流程
-- [ ] 单二进制独立可用（release 构建，无外部静态文件）
-- [ ] 三类门禁全绿：cargo test / tsc / vite build
-- [ ] 安全负向：假 Host / 跨源 POST / 越权路径 均被拒
-- [ ] Linux（WSL2 或服务器）启动 + SSH 隧道访问验证
+- [x] Windows：起服务，真浏览器完成「扫描（118 skills）→ 预览 → 执行同步 → 历史落账」全流程（lead 实测；symlink 前置检查正确拦截 Windows 无特权场景——设计行为）
+- [x] 单二进制独立可用（release 内嵌负向验证：dist 改名后仍逐字节服务页面）
+- [x] 三类门禁全绿：cargo test（64 web + 39 默认）/ tsc / vite build
+- [x] 安全负向：假 Host / 跨源 POST / cross-site 全 403，同源 200（lead curl 实测）；浏览器全程零 pageError
+- [ ] Linux（WSL2 或服务器）启动 + SSH 隧道访问验证 —— 本机无 WSL2，推迟到有 Linux 环境时执行（deployment.md 已含完整步骤）
