@@ -10,7 +10,7 @@
 - [x] frontend-adapter（verifier 通过；lead 复核 build 绿；实际 15 处 invoke 全部替换）
 
 ## 批次 3
-- [ ] dir-browser
+- [x] dir-browser（含 D7-R1 分层 jail 修订；verifier 12 条 TCP 断言 + 真浏览器 DirPicker 闭环；lead 复核 64/64 + 39/39 绿）
 
 ## 批次 4 · 并行
 - [ ] build-packaging

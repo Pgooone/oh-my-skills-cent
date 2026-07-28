@@ -39,12 +39,21 @@ impl AppState {
         &self.ctx
     }
 
-    /// D7 校验入口：routes 对每个来自请求的路径参数调用。
-    pub fn check_path(&self, raw: &str) -> Result<PathBuf, String> {
+    /// D7 严格级校验入口（Tier 2 文件变更类）：routes 对写操作的路径参数调用。
+    pub fn check_write_path(&self, raw: &str) -> Result<PathBuf, String> {
         self.jail
             .read()
             .map_err(|_| "Path jail lock poisoned".to_string())?
-            .check(raw)
+            .check_write(raw)
+    }
+
+    /// D7-R1 宽松级校验入口（Tier 1 注册/浏览类）：home 子树 + 允许根集 +
+    /// Windows 盘符顶层一层。
+    pub fn check_browse_path(&self, raw: &str) -> Result<PathBuf, String> {
+        self.jail
+            .read()
+            .map_err(|_| "Path jail lock poisoned".to_string())?
+            .check_browse(raw)
     }
 
     /// save_settings 成功后用新 settings 重建允许根集。
@@ -94,6 +103,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/commands/remove_skill_entries",
             post(routes::remove_skill_entries),
         )
+        .route("/api/commands/list_dir", post(routes::list_dir))
         // D8：所有 /api 请求过 Host / Origin / Sec-Fetch-Site 校验。
         .route_layer(middleware::from_fn(guard::local_only_guard));
 
@@ -334,13 +344,15 @@ mod tests {
         assert_eq!(saved.language, "en");
         assert_eq!(saved.library_path, current.library_path);
 
-        // 保存后 jail 已刷新：新 library 下的路径可通过校验。
+        // 保存后 jail 已刷新：新 library 下的路径可通过写级校验。
         let new_entry = format!("{}/demo", saved.library_path);
-        assert!(state.check_path(&new_entry).is_ok());
+        assert!(state.check_write_path(&new_entry).is_ok());
     }
 
+    // D7-R1：libraryPath 属注册类，拒绝的语义从「允许根集之外」放宽为
+    // 「home 子树之外（且非允许根、非盘符顶层）」。
     #[tokio::test]
-    async fn save_settings_rejects_library_path_outside_roots() {
+    async fn save_settings_rejects_library_path_outside_home() {
         let (_temp, state) = test_state();
         let app = build_router(state);
 
@@ -359,5 +371,126 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // D7-R1 正例：home 之下未注册的新路径必须被接受（旧严格 jail 会 403）。
+    #[tokio::test]
+    async fn save_settings_accepts_unregistered_library_path_under_home() {
+        let (temp, state) = test_state();
+        let app = build_router(state);
+
+        let new_library =
+            crate::fs_ops::path_to_string(&temp.path().join("home").join("brand-new-library"));
+        let body = serde_json::json!({
+            "settings": {
+                "libraryPath": new_library,
+                "projectFolders": [],
+                "customRoots": [],
+                "showRawPaths": false,
+                "language": "zh-CN"
+            }
+        })
+        .to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/save_settings", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved: crate::models::Settings =
+            serde_json::from_str(&body_string(response).await).expect("saved json");
+        assert_eq!(saved.library_path, new_library);
+    }
+
+    // -- list_dir（dir-browser）------------------------------------------------
+
+    #[tokio::test]
+    async fn list_dir_defaults_to_home_and_sorts_dirs_first() {
+        let (temp, state) = test_state();
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join("zeta-dir")).expect("mkdir");
+        std::fs::create_dir_all(home.join("alpha-dir")).expect("mkdir");
+        std::fs::write(home.join("notes.txt"), "hi").expect("write");
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(post_json("/api/commands/list_dir", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+
+        assert_eq!(
+            body["path"].as_str().expect("path"),
+            crate::fs_ops::path_to_string(&home)
+        );
+        let entries = body["entries"].as_array().expect("entries");
+        let names: Vec<&str> = entries.iter().map(|e| e["name"].as_str().unwrap()).collect();
+        // load_settings 可能已在 home 下创建默认中心库目录（.oh-my-skills），
+        // 只断言本测试创建条目的相对顺序：目录在前、各自按名称排序。
+        let created: Vec<&str> = names
+            .into_iter()
+            .filter(|name| ["alpha-dir", "zeta-dir", "notes.txt"].contains(name))
+            .collect();
+        assert_eq!(created, vec!["alpha-dir", "zeta-dir", "notes.txt"]);
+        assert_eq!(entries[0]["isDir"], true);
+        let notes = entries.iter().find(|e| e["name"] == "notes.txt").expect("notes");
+        assert_eq!(notes["isDir"], false);
+    }
+
+    #[tokio::test]
+    async fn list_dir_accepts_unregistered_path_under_home() {
+        let (temp, state) = test_state();
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join("fresh")).expect("mkdir");
+        let app = build_router(state);
+
+        let body = serde_json::json!({ "path": crate::fs_ops::path_to_string(&home.join("fresh")) })
+            .to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/list_dir", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let json: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        // 上级 = home，在浏览规则内，应当给出。
+        assert_eq!(
+            json["parent"].as_str().expect("parent"),
+            crate::fs_ops::path_to_string(&home)
+        );
+    }
+
+    #[tokio::test]
+    async fn list_dir_rejects_path_outside_browsable_area() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/list_dir",
+                r#"{"path":"/definitely/outside/home"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn discover_accepts_unregistered_base_path_under_home() {
+        let (temp, state) = test_state();
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join("scan-me")).expect("mkdir");
+        let app = build_router(state);
+
+        let body = serde_json::json!({
+            "basePath": crate::fs_ops::path_to_string(&home.join("scan-me"))
+        })
+        .to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/discover_project_workspaces", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

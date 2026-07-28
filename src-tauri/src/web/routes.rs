@@ -1,10 +1,18 @@
-//! 12 个既有 command 的 HTTP endpoint（薄转发，NFR-2）+ `GET /api/health`。
+//! 12 个既有 command 的 HTTP endpoint（薄转发，NFR-2）+ 新增 `list_dir`
+//! （dir-browser，D3 目录选择替代）+ `GET /api/health`。
 //!
 //! 契约（设计 §2.3）：
 //! - `POST /api/commands/{command_name}`，请求 JSON = 参数 map（camelCase，同 tauri invoke）
 //! - 200 → 返回值 JSON；422 → 业务错误 `{"error": ...}`；403 → jail/guard 拒绝
 //!
 //! 每个 endpoint 的请求 struct 逐一定义（serde camelCase），不用 Value 透传。
+//!
+//! 路径参数 jail 按 D7-R1 分层：
+//! - Tier 1 注册/浏览类（list_dir / discover_project_workspaces.basePath /
+//!   save_settings.libraryPath）走 `check_browse_path` 宽松规则；
+//! - Tier 2 文件变更类（remove_skill_entries / update_skills_sh_skill /
+//!   apply_sync_plan，以及只读但目标必然已注册的 check_skills_sh_update）
+//!   走 `check_write_path` 严格 jail。
 
 use super::AppState;
 use crate::models::{
@@ -79,8 +87,8 @@ pub async fn save_settings(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SaveSettingsRequest>,
 ) -> Response {
-    // libraryPath 写时校验：不得指向当前允许根集之外。
-    if let Err(error) = state.check_path(&request.settings.library_path) {
+    // libraryPath 属注册类（Tier 1）：宽松校验，允许指向 home 之下未注册的新位置。
+    if let Err(error) = state.check_browse_path(&request.settings.library_path) {
         return rejected(error);
     }
     if let Err(error) = settings::save_settings(state.ctx(), &request.settings) {
@@ -146,7 +154,8 @@ pub async fn discover_project_workspaces(
     State(state): State<Arc<AppState>>,
     Json(request): Json<DiscoverProjectWorkspacesRequest>,
 ) -> Response {
-    if let Err(error) = state.check_path(&request.base_path) {
+    // basePath 属注册/浏览类（Tier 1）：宽松校验。
+    if let Err(error) = state.check_browse_path(&request.base_path) {
         return rejected(error);
     }
     let settings = match settings::load_settings(state.ctx()) {
@@ -242,7 +251,8 @@ pub async fn check_skills_sh_update(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SkillsShUpdateRequest>,
 ) -> Response {
-    if let Err(error) = state.check_path(&request.entry_path) {
+    // 只读但目标必然来自已注册 skills 目录，维持严格 jail（Tier 2）。
+    if let Err(error) = state.check_write_path(&request.entry_path) {
         return rejected(error);
     }
     respond(skill_ops::check_skills_sh_update(
@@ -258,7 +268,7 @@ pub async fn update_skills_sh_skill(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SkillsShUpdateRequest>,
 ) -> Response {
-    if let Err(error) = state.check_path(&request.entry_path) {
+    if let Err(error) = state.check_write_path(&request.entry_path) {
         return rejected(error);
     }
     respond(skill_ops::update_skills_sh_skill(
@@ -282,9 +292,90 @@ pub async fn remove_skill_entries(
 ) -> Response {
     // 最危险的 endpoint：每个路径都必须落在允许根集内，任一越界整体 403。
     for path in &request.paths {
-        if let Err(error) = state.check_path(path) {
+        if let Err(error) = state.check_write_path(path) {
             return rejected(error);
         }
     }
     respond(skill_ops::remove_skill_entries(request.paths))
+}
+
+// ---------------------------------------------------------------------------
+// list_dir（dir-browser 新增，D3 目录选择替代）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDirRequest {
+    pub path: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDirEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDirResponse {
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<ListDirEntry>,
+}
+
+pub async fn list_dir(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ListDirRequest>,
+) -> Response {
+    // 缺省 path = home_dir（永远在浏览规则内，无需校验）。
+    let target = match request.path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(raw) => match state.check_browse_path(raw) {
+            Ok(path) => path,
+            Err(error) => return rejected(error),
+        },
+        None => state.ctx().home_dir().to_path_buf(),
+    };
+
+    let read_dir = match std::fs::read_dir(&target) {
+        Ok(read_dir) => read_dir,
+        Err(error) => {
+            return business_error(format!(
+                "Unable to read directory {}: {error}",
+                crate::fs_ops::path_to_string(&target)
+            ))
+        }
+    };
+
+    let mut entries: Vec<ListDirEntry> = read_dir
+        .filter_map(|entry| entry.ok())
+        .map(|entry| {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            ListDirEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: crate::fs_ops::path_to_string(&entry.path()),
+                is_dir,
+            }
+        })
+        .collect();
+    // 只列一层，目录在前；各自按名称（大小写不敏感）排序。
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    // 上级仅在它本身也落在浏览规则内时给出，否则为 null（前端隐藏「上级」）。
+    let parent = target.parent().and_then(|parent| {
+        let raw = crate::fs_ops::path_to_string(parent);
+        state.check_browse_path(&raw).ok().map(|_| raw)
+    });
+
+    Json(ListDirResponse {
+        path: crate::fs_ops::path_to_string(&target),
+        parent,
+        entries,
+    })
+    .into_response()
 }

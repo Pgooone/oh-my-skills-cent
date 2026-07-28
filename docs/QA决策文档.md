@@ -280,6 +280,7 @@
 | D5 | **一步多 skill 的顺序约定**：skills 数组有序，数组顺序即加载/执行顺序；显式写入入口清单 README 与打包 SKILL.md | 原 PRD 开放问题之四，由 ADR-0001（声明式有序）直接导出 |
 | D6 | **Linux agent 检测**：补 PATH 查找方案（`which` / `~/.local/bin` / `/usr/local/bin`）；skills 目录表（`~/.claude/skills` 等 home 相对路径）无需改动；`/Applications/*.app` 类 macOS 检测在 Linux 上静默找不到、不报错，服务器场景 CLI 证据已够用 | §1 源码事实 + 深度分析确认 |
 | D7 | **HTTP 层路径白名单**：所有接受路径参数的 endpoint 必须 jail 在「已注册的 agent skills 目录 + 中心库 + 数据目录」内——现 `remove_skill_entries` 仅靠「父目录名为 skills」防护，Web 化后路径来自 HTTP 请求，不设 jail 就是任意文件删除 API | 深度分析发现；即使仅 localhost 也应防御（防误操作与前端 bug 放大） |
+| D7-R1 | **D7 分层修订（批次 2 验收时发现）**：严格 jail 只适用「文件变更类」操作（remove_skill_entries / update_skills_sh_skill / apply_sync_plan）；「注册/浏览类」操作（list_dir / discover_project_workspaces.basePath / save_settings.libraryPath）改用宽松规则（home 子树 + 已注册根 + 盘符顶层）——后者的本质就是注册新位置，严格 jail 会把合法功能 403 掉，且其直接效果仅是读目录列表或写 settings.json，真正的文件变更仍走 Sync Plan 预览确认 | web-server verifier 在 TCP 冒烟中发现「严格 jail 会误杀注册新路径的合法操作」；lead 裁决保留 D7 安全意图（写盘操作不放宽）同时解开功能死锁 |
 | D8 | **防 CSRF/DNS rebinding**：HTTP 层校验 `Host` 头必须是 localhost，并拒绝跨源写请求（检查 `Origin`/`Sec-Fetch-Site`） | vibe-coding 开始前澄清时补充：仅监听 localhost ≠ 只有本机进程能访问，浏览器内任意网页都能向 127.0.0.1 发请求；对能删文件的无认证服务必须堵上，成本仅一个中间件 |
 
 ---

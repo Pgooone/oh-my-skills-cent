@@ -1,0 +1,123 @@
+/* DirPicker（Web 模式目录选择器）：外壳复用 settings-sheet 视觉语言，
+   这里只补面包屑与目录列表的特有样式。 */
+
+.dir-picker-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid rgba(24, 26, 29, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+}
+
+.dir-picker-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dir-picker-crumb button {
+  max-width: 180px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(23, 25, 28, 0.66);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-picker-crumb button:hover {
+  background: rgba(24, 26, 29, 0.06);
+  color: var(--app-text);
+}
+
+.dir-picker-crumb:last-child button {
+  color: var(--app-text);
+  font-weight: 650;
+}
+
+.dir-picker-crumb-sep {
+  color: rgba(23, 25, 28, 0.34);
+  font-size: 11px;
+}
+
+.dir-picker-content {
+  display: grid;
+  align-content: start;
+}
+
+.dir-picker-list {
+  overflow: auto;
+}
+
+.dir-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.dir-picker-row + .dir-picker-row {
+  border-top: 1px solid rgba(24, 26, 29, 0.06);
+}
+
+.dir-picker-row svg {
+  flex: 0 0 auto;
+  color: rgba(23, 25, 28, 0.48);
+}
+
+.dir-picker-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-picker-row:hover {
+  background: rgba(24, 26, 29, 0.045);
+}
+
+.dir-picker-row.selected {
+  background: rgba(47, 51, 56, 0.10);
+}
+
+.dir-picker-up {
+  color: rgba(23, 25, 28, 0.58);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.dir-picker-hint {
+  padding: 28px 16px;
+  color: var(--app-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.dir-picker-error {
+  margin: 4px 6px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(168, 56, 42, 0.24);
+  border-radius: 10px;
+  background: rgba(168, 56, 42, 0.07);
+  color: #a3382a;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}

@@ -1,4 +1,7 @@
 import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { DirPicker } from "../components/DirPicker";
 import { callApi } from "./api";
 import { isTauriRuntime } from "./runtime";
 
@@ -12,11 +15,34 @@ export async function pickDirectory(title: string): Promise<string | null> {
     const selected = await open({ directory: true, multiple: false, title });
     return typeof selected === "string" ? selected : null;
   }
-  // TODO(dir-browser): 批次 3 替换为 DirPicker modal（promise 化挂载点），
-  // 当前临时用 window.prompt 手动输入路径。
-  const entered = window.prompt(`${title}：请输入目录路径`);
-  const trimmed = entered?.trim() ?? "";
-  return trimmed ? trimmed : null;
+  return pickDirectoryWeb(title);
+}
+
+/** Web 分支：挂载 DirPicker modal，选择/取消时 resolve 并卸载。 */
+function pickDirectoryWeb(title: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    let settled = false;
+    const finish = (path: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(path);
+      // 延迟卸载，避免在 React 事件回调中同步 unmount 根节点。
+      setTimeout(() => {
+        root.unmount();
+        host.remove();
+      }, 0);
+    };
+    root.render(
+      createElement(DirPicker, {
+        title,
+        onSelect: (path: string) => finish(path),
+        onCancel: () => finish(null)
+      })
+    );
+  });
 }
 
 export function openUrl(url: string): void {
