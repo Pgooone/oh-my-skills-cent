@@ -23,8 +23,12 @@
     "tauri:build:macos": "tauri build --config src-tauri/tauri.macos.conf.json",
     "tauri:build:windows": "tauri build --config src-tauri/tauri.windows.conf.json",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "smoke": "npm run build && npm run test:rust"
+    "smoke": "npm run build && npm run test:rust",
+    "web:build": "npm run build && cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features --features web --bin oms-web",
+    "web:dev:server": "cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin oms-web",
+    "web:dev:web": "npm run dev"
   },
+  "//": "web:dev 开发流（两个终端，无额外依赖）：终端1 npm run web:dev:server（oms-web 后端 127.0.0.1:8477）；终端2 npm run web:dev:web（vite 前端 localhost:1420，/api 已代理到 8477）。web:build 先 vite build 产出 dist/ 再 cargo release 构建，rust-embed 编译期内嵌 dist，产物为 src-tauri/target/release/oms-web(.exe)。",
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.2.2",
