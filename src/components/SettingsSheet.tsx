@@ -1,8 +1,7 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { Check, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AgentIcon, StatusPill } from "./shared";
-import { isTauriRuntime } from "../lib/runtime";
+import { pickDirectory } from "../lib/shell";
 import { agentSignalSummary, compactPath } from "../lib/skillUtils";
 import type { AgentRecord, InventorySnapshot, Settings as AppSettings, SkillRecord } from "../types";
 
@@ -35,18 +34,8 @@ export function SettingsSheet({
   }, [onClose]);
 
   async function addCustomRoot() {
-    if (!isTauriRuntime()) {
-      const path = window.prompt("演示模式：输入要扫描的 Skills 路径");
-      if (!path?.trim()) return;
-      pushCustomRoot(path.trim());
-      return;
-    }
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "选择要扫描的 Skills 路径"
-    });
-    if (typeof selected !== "string" || !selected.trim()) return;
+    const selected = await pickDirectory("选择要扫描的 Skills 路径");
+    if (!selected?.trim()) return;
     pushCustomRoot(selected.trim());
   }
 

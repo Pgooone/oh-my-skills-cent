@@ -6,8 +6,8 @@
 - [x] core-context（ce0607a 之后单独 commit；verifier 通过，lead 复核 39/39 绿）
 
 ## 批次 2 · 并行
-- [ ] web-server
-- [ ] frontend-adapter
+- [x] web-server（verifier 通过；lead 复核 55/55 绿 + TCP 冒烟；范围偏差 commands→skill_ops 抽取已核实）
+- [x] frontend-adapter（verifier 通过；lead 复核 build 绿；实际 15 处 invoke 全部替换）
 
 ## 批次 3
 - [ ] dir-browser

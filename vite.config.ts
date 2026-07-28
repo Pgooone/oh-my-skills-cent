@@ -6,7 +6,10 @@ export default defineConfig({
   clearScreen: false,
   server: {
     port: 1420,
-    strictPort: true
+    strictPort: true,
+    proxy: {
+      "/api": "http://127.0.0.1:8477"
+    }
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {

@@ -1,9 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Github, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { AgentEmptyVisual, ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { AgentBadge, AgentIcon, Coverage, IssueList, SkillState } from "../components/shared";
-import { isTauriRuntime } from "../lib/runtime";
+import { openUrl, revealPath } from "../lib/shell";
 import { agentSkillCount, centralLibraryReferenceSummary, compactPath, isCentralLibraryReference, projectName, projectStats, samePath, skillListStatus, skillSourceSummary } from "../lib/skillUtils";
 import type { AgentRecord, ProjectWorkspaceCandidate, Settings as AppSettings, SkillLockEntry, SkillRecord, SkillUpdateCheck } from "../types";
 import type { SkillWorkspace } from "../uiTypes";
@@ -767,7 +766,7 @@ function SkillDetail({
             className="meta-icon-button"
             onClick={(event) => {
               event.stopPropagation();
-              void openUrl(source.githubUrl);
+              if (source.githubUrl) openUrl(source.githubUrl);
             }}
             title="打开 GitHub 仓库"
             type="button"
@@ -869,7 +868,7 @@ function PathList({
             className="meta-icon-button"
             onClick={(event) => {
               event.stopPropagation();
-              void openPath(item.path);
+              revealPath(item.path);
             }}
             title="打开路径（不存在或断链时打开上一级）"
             type="button"
@@ -903,14 +902,4 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
       <div>{children}</div>
     </div>
   );
-}
-
-async function openPath(path: string) {
-  if (!isTauriRuntime()) return;
-  await invoke("open_path", { path });
-}
-
-async function openUrl(url: string | null) {
-  if (!url || !isTauriRuntime()) return;
-  await invoke("open_url", { url });
 }

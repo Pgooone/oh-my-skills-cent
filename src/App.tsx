@@ -1,12 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentDiscoveryEmptyState } from "./components/AgentDiscoveryEmptyState";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { TabButton } from "./components/TabButton";
+import { callApi, hasRealBackend, probeRealBackend } from "./lib/api";
 import { demoBatchPlan, demoInventory, demoSkillLocks } from "./lib/demoData";
-import { isTauriRuntime } from "./lib/runtime";
+import { askConfirm, pickDirectory } from "./lib/shell";
 import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibraryReference, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
 import type { QuickMigrationMethod, SkillWorkspace, SyncMode, View } from "./uiTypes";
 import { SkillsView } from "./views/SkillsView";
@@ -175,7 +174,8 @@ export default function App() {
   async function boot() {
     setBusy("读取上次扫描");
     setError(null);
-    if (!isTauriRuntime()) {
+    await probeRealBackend();
+    if (!hasRealBackend()) {
       setSettings(defaultSettings);
       setDraftSettings(defaultSettings);
       setSkillLocks(demoSkillLocks);
@@ -189,7 +189,7 @@ export default function App() {
     }
     try {
       const [loaded, locks, cachedInventory] = await Promise.all([
-        invoke<AppSettings>("get_settings"),
+        callApi<AppSettings>("get_settings"),
         readSkillLocks(),
         readInventoryCache()
       ]);
@@ -222,7 +222,7 @@ export default function App() {
   async function refreshInventory(projectFoldersForSelection = settings.projectFolders) {
     setBusy("扫描本机 Agent 与 Skills");
     setError(null);
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       setInventory(demoInventory);
       setSkillLocks(demoSkillLocks);
       setSkillUpdateChecks({});
@@ -234,7 +234,7 @@ export default function App() {
     try {
       const [locks, next] = await Promise.all([
         readSkillLocks(),
-        invoke<InventorySnapshot>("scan_inventory", {
+        callApi<InventorySnapshot>("scan_inventory", {
           options: { includeOrphaned: false }
         })
       ]);
@@ -265,17 +265,17 @@ export default function App() {
   }
 
   async function readSkillLocks() {
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       return demoSkillLocks;
     }
-    return invoke<Record<string, SkillLockEntry>>("read_skill_lock");
+    return callApi<Record<string, SkillLockEntry>>("read_skill_lock");
   }
 
   async function readInventoryCache() {
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       return demoInventory;
     }
-    return invoke<InventorySnapshot | null>("read_inventory_cache");
+    return callApi<InventorySnapshot | null>("read_inventory_cache");
   }
 
   async function previewSkillsSync(skills = queuedSkills, targets: AgentTarget[] = [], replacements: SyncReplacement[] = []) {
@@ -285,7 +285,7 @@ export default function App() {
     setBusy("生成同步预览");
     setError(null);
     setApplyResult(null);
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       setSyncPlan(demoBatchPlan(skills, targets, "batch-sync"));
       setSyncPlanProjectFolders(plannedProjectFolders);
       setView("sync");
@@ -293,7 +293,7 @@ export default function App() {
       return;
     }
     try {
-      const plan = await invoke<SyncPlan>("preview_batch_sync", {
+      const plan = await callApi<SyncPlan>("preview_batch_sync", {
         sources,
         targets,
         replacements
@@ -316,7 +316,7 @@ export default function App() {
     setBusy("生成同步预览");
     setError(null);
     setApplyResult(null);
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       setSyncPlan(demoBatchPlan(skills, targets, "batch-quick-migrate"));
       setSyncPlanProjectFolders(plannedProjectFolders);
       setView("sync");
@@ -324,7 +324,7 @@ export default function App() {
       return;
     }
     try {
-      const plan = await invoke<SyncPlan>("preview_batch_quick_migration", {
+      const plan = await callApi<SyncPlan>("preview_batch_quick_migration", {
         sources,
         targets,
         method
@@ -345,7 +345,7 @@ export default function App() {
     const projectFoldersToRegister = syncPlanProjectFolders;
     setBusy("执行同步计划");
     setError(null);
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       setApplyResult({
         planId: syncPlan.planId,
         appliedOperations: syncPlan.operations.map((operation) => operation.id),
@@ -357,7 +357,7 @@ export default function App() {
       return;
     }
     try {
-      const result = await invoke<ApplyResult>("apply_sync_plan", {
+      const result = await callApi<ApplyResult>("apply_sync_plan", {
         planId: syncPlan.planId
       });
       setApplyResult(result);
@@ -365,7 +365,7 @@ export default function App() {
       if (result.errors.length === 0 && projectFoldersToRegister.length > 0) {
         const nextProjectFolders = mergeProjectFolders(settings.projectFolders, projectFoldersToRegister);
         if (nextProjectFolders.length !== settings.projectFolders.length) {
-          const saved = await invoke<AppSettings>("save_settings", {
+          const saved = await callApi<AppSettings>("save_settings", {
             settings: {
               ...settings,
               projectFolders: nextProjectFolders
@@ -391,7 +391,7 @@ export default function App() {
     setBusy("保存设置");
     setError(null);
     try {
-      const saved = await invoke<AppSettings>("save_settings", { settings: draftSettings });
+      const saved = await callApi<AppSettings>("save_settings", { settings: draftSettings });
       setSettings(saved);
       setDraftSettings(saved);
       setSettingsOpen(false);
@@ -411,8 +411,8 @@ export default function App() {
     setBusy(busyLabel);
     setError(null);
     try {
-      if (isTauriRuntime()) {
-        const saved = await invoke<AppSettings>("save_settings", { settings: nextSettings });
+      if (hasRealBackend()) {
+        const saved = await callApi<AppSettings>("save_settings", { settings: nextSettings });
         setSettings(saved);
         setDraftSettings(saved);
       } else {
@@ -449,12 +449,12 @@ export default function App() {
 
   async function validateProjectWorkspacePath(path: string) {
     if (settings.projectFolders.some((folder) => samePath(folder, path))) return true;
-    if (!isTauriRuntime()) return true;
+    if (!hasRealBackend()) return true;
 
     setBusy("检查项目 Skills");
     setError(null);
     try {
-      const candidates = await invoke<ProjectWorkspaceCandidate[]>("discover_project_workspaces", {
+      const candidates = await callApi<ProjectWorkspaceCandidate[]>("discover_project_workspaces", {
         basePath: path
       });
       return candidates.some((candidate) => samePath(candidate.path, path) && candidate.skillCount > 0);
@@ -467,22 +467,21 @@ export default function App() {
   }
 
   async function addProjectWorkspace() {
-    const selected = await open({ directory: true, multiple: false, title: "关联项目工作区" });
+    const selected = await pickDirectory("关联项目工作区");
     if (typeof selected !== "string") return;
     await addProjectPath(selected);
   }
 
   async function chooseSyncProject() {
-    if (!isTauriRuntime()) {
+    if (!hasRealBackend()) {
       return "/Users/example/Projects/demo-project";
     }
 
-    const selected = await open({ directory: true, multiple: false, title: "选择要同步的项目" });
-    return typeof selected === "string" ? selected : null;
+    return pickDirectory("选择要同步的项目");
   }
 
   async function discoverProjectWorkspaces() {
-    const selected = await open({ directory: true, multiple: false, title: "扫描发现项目工作区" });
+    const selected = await pickDirectory("扫描发现项目工作区");
     if (typeof selected !== "string") return;
     const runId = discoveryRunRef.current + 1;
     discoveryRunRef.current = runId;
@@ -492,14 +491,14 @@ export default function App() {
     setView("skills");
     setDiscoveryBasePath(selected);
     try {
-      if (!isTauriRuntime()) {
+      if (!hasRealBackend()) {
         if (discoveryRunRef.current !== runId) return;
         setDiscoveredProjects([]);
         setDiscoveryBasePath(null);
         setToast("该项目没有 skills，暂时无法添加");
         return;
       }
-      const candidates = await invoke<ProjectWorkspaceCandidate[]>("discover_project_workspaces", {
+      const candidates = await callApi<ProjectWorkspaceCandidate[]>("discover_project_workspaces", {
         basePath: selected
       });
       if (discoveryRunRef.current !== runId) return;
@@ -569,7 +568,7 @@ export default function App() {
   }
 
   async function refreshSkillsShUpdateChecks(skills: SkillRecord[], locks: Record<string, SkillLockEntry>) {
-    if (!isTauriRuntime() || skills.length === 0) return;
+    if (!hasRealBackend() || skills.length === 0) return;
     for (const skill of skills) {
       const source = skillsShUpdateSource(skill, locks);
       if (!source) continue;
@@ -578,7 +577,7 @@ export default function App() {
         return { ...current, [skill.id]: { status: "checking" } };
       });
       try {
-        const result = await invoke<SkillUpdateCheck>("check_skills_sh_update", {
+        const result = await callApi<SkillUpdateCheck>("check_skills_sh_update", {
           slug: skill.slug,
           entryPath: source.installation.entryPath,
           sourceUrl: source.sourceUrl,
@@ -601,7 +600,7 @@ export default function App() {
     setError(null);
     setUpdatingSkillIds((current) => new Set(current).add(skill.id));
     try {
-      const result = await invoke<SkillUpdateCheck>("update_skills_sh_skill", {
+      const result = await callApi<SkillUpdateCheck>("update_skills_sh_skill", {
         slug: skill.slug,
         entryPath: source.installation.entryPath,
         sourceUrl: source.sourceUrl,
@@ -644,11 +643,11 @@ export default function App() {
     setBusy(uniquePaths.length === 1 ? "正在移除路径" : `正在移除 ${uniquePaths.length} 个路径`);
     setError(null);
     try {
-      if (!isTauriRuntime()) {
+      if (!hasRealBackend()) {
         setToast("演示模式无法删除本机路径");
         return;
       }
-      const result = await invoke<{ removed: string[]; failed: { path: string; error: string }[] }>(
+      const result = await callApi<{ removed: string[]; failed: { path: string; error: string }[] }>(
         "remove_skill_entries",
         { paths: uniquePaths }
       );
@@ -909,16 +908,6 @@ function uniqueSkillPaths(paths: string[]) {
     unique.push(path);
   }
   return unique;
-}
-
-async function askConfirm(message: string, title: string) {
-  if (!isTauriRuntime()) {
-    return window.confirm(message);
-  }
-  return confirm(message, {
-    title,
-    kind: "warning"
-  });
 }
 
 function projectFoldersFromTargets(targets: AgentTarget[]) {
