@@ -6,7 +6,10 @@ pub mod models;
 pub mod registry;
 pub mod scanner;
 pub mod settings;
+pub mod skill_ops;
 pub mod sync_plan;
+#[cfg(feature = "web")]
+pub mod web;
 
 #[cfg(feature = "tauri-shell")]
 pub(crate) fn app_context(app: &tauri::AppHandle) -> Result<context::AppContext, String> {
