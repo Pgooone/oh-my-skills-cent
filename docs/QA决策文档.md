@@ -280,6 +280,7 @@
 | D5 | **一步多 skill 的顺序约定**：skills 数组有序，数组顺序即加载/执行顺序；显式写入入口清单 README 与打包 SKILL.md | 原 PRD 开放问题之四，由 ADR-0001（声明式有序）直接导出 |
 | D6 | **Linux agent 检测**：补 PATH 查找方案（`which` / `~/.local/bin` / `/usr/local/bin`）；skills 目录表（`~/.claude/skills` 等 home 相对路径）无需改动；`/Applications/*.app` 类 macOS 检测在 Linux 上静默找不到、不报错，服务器场景 CLI 证据已够用 | §1 源码事实 + 深度分析确认 |
 | D7 | **HTTP 层路径白名单**：所有接受路径参数的 endpoint 必须 jail 在「已注册的 agent skills 目录 + 中心库 + 数据目录」内——现 `remove_skill_entries` 仅靠「父目录名为 skills」防护，Web 化后路径来自 HTTP 请求，不设 jail 就是任意文件删除 API | 深度分析发现；即使仅 localhost 也应防御（防误操作与前端 bug 放大） |
+| D8 | **防 CSRF/DNS rebinding**：HTTP 层校验 `Host` 头必须是 localhost，并拒绝跨源写请求（检查 `Origin`/`Sec-Fetch-Site`） | vibe-coding 开始前澄清时补充：仅监听 localhost ≠ 只有本机进程能访问，浏览器内任意网页都能向 127.0.0.1 发请求；对能删文件的无认证服务必须堵上，成本仅一个中间件 |
 
 ---
 
@@ -288,6 +289,7 @@
 | 风险 | 等级 | 护栏 |
 | --- | --- | --- |
 | 误绑 0.0.0.0 导致无认证服务暴露公网（可远程写磁盘） | **高** | D4：非 localhost 拒绝启动；部署文档显式教 SSH 隧道 / 反代加认证 |
+| 浏览器内恶意网页向 127.0.0.1 发请求（CSRF/DNS rebinding）驱动本服务 | **高** | D8：Host 头校验 + 拒绝跨源写请求 |
 | HTTP 请求路径越权（删除/覆盖白名单外文件） | **高** | D7：HTTP 层统一路径白名单 jail |
 | 单二进制并非 100% 自包含：更新检查依赖系统 `git` CLI（`git clone`） | 中 | 部署文档注明 git 为运行时依赖；git 缺失时更新检查功能降级报错而非崩溃 |
 | `git clone <sourceUrl>` 的 URL 注入 | 低 | 现有 `normalize_github_url` 仅允许 GitHub 域名，URL 作为独立参数传递（非 shell 拼接），保留此约束 |
