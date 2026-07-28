@@ -96,6 +96,19 @@ src-tauri/target/release/bundle/macos/Oh My Skills.app
 src-tauri/target/release/bundle/nsis/Oh My Skills_0.1.0_x64-setup.exe
 ```
 
+### Web 版（Linux 服务器）
+
+除桌面版外，还可以构建零 GUI 依赖的 Web 版（`oms-web` 单文件二进制），部署到
+Linux 服务器后经 SSH 隧道在浏览器中使用：
+
+```bash
+npm install && npm run build   # 先构建前端
+cargo build --release --no-default-features --features web --bin oms-web \
+  --manifest-path src-tauri/Cargo.toml
+```
+
+完整部署步骤（systemd、SSH 隧道、故障排查）见 [docs/deployment.md](docs/deployment.md)。
+
 ## 使用流程
 
 1. **扫描**：启动后自动检测已安装 Agent 和它们的 Skills

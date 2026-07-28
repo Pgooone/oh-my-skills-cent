@@ -90,6 +90,21 @@ src-tauri/target/release/bundle/macos/Oh My Skills.app
 src-tauri/target/release/bundle/nsis/Oh My Skills_0.1.0_x64-setup.exe
 ```
 
+### Web Version (Linux Server)
+
+In addition to the desktop app, you can build a GUI-free web variant
+(`oms-web`, a single self-contained binary), deploy it on a Linux server,
+and use it from a browser over an SSH tunnel:
+
+```bash
+npm install && npm run build   # build the frontend first
+cargo build --release --no-default-features --features web --bin oms-web \
+  --manifest-path src-tauri/Cargo.toml
+```
+
+Full deployment instructions (systemd, SSH tunnel, troubleshooting) are in
+[docs/deployment.md](docs/deployment.md).
+
 ## Workflow
 
 1. **Scan** — App automatically detects installed agents and their skills on launch
