@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use crate::fs_ops::{
     copy_dir_recursive, create_symlink, ensure_dir, hash_dir, move_path, path_to_string,
     remove_entry, symlink_unavailable_message,
@@ -12,10 +13,9 @@ use crate::settings::{app_data_dir, load_settings};
 use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
 
-pub fn preview_adopt(app: &AppHandle, source: InstallationRef) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+pub fn preview_adopt(ctx: &AppContext, source: InstallationRef) -> Result<SyncPlan, String> {
+    let settings = load_settings(ctx)?;
     let source_path = PathBuf::from(&source.entry_path);
     let destination = PathBuf::from(&settings.library_path).join(&source.slug);
     let plan_id = plan_id("adopt");
@@ -80,22 +80,22 @@ pub fn preview_adopt(app: &AppHandle, source: InstallationRef) -> Result<SyncPla
         blocked_conflicts,
         created_at,
     };
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
 pub fn preview_sync(
-    app: &AppHandle,
+    ctx: &AppContext,
     skill_id: String,
     targets: Vec<AgentTarget>,
     replacements: Vec<SyncReplacement>,
 ) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+    let settings = load_settings(ctx)?;
     let library_path = PathBuf::from(&settings.library_path);
     let source_path = library_path.join(&skill_id);
     let plan_id = plan_id("sync");
     let created_at = Utc::now().to_rfc3339();
-    let backup_root = backup_root_for_plan(app, &settings, &plan_id)?;
+    let backup_root = backup_root_for_plan(ctx, &settings, &plan_id)?;
     let mut operations = Vec::new();
     let mut blocked_conflicts = Vec::new();
     let mut preconditions = Vec::new();
@@ -131,22 +131,22 @@ pub fn preview_sync(
         blocked_conflicts,
         created_at,
     );
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
 pub fn preview_sync_from_installation(
-    app: &AppHandle,
+    ctx: &AppContext,
     source: InstallationRef,
     targets: Vec<AgentTarget>,
     replacements: Vec<SyncReplacement>,
 ) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+    let settings = load_settings(ctx)?;
     let source_path = PathBuf::from(&source.entry_path);
     let destination = PathBuf::from(&settings.library_path).join(&source.slug);
     let plan_id = plan_id("sync");
     let created_at = Utc::now().to_rfc3339();
-    let backup_root = backup_root_for_plan(app, &settings, &plan_id)?;
+    let backup_root = backup_root_for_plan(ctx, &settings, &plan_id)?;
     let mut operations = Vec::new();
     let mut blocked_conflicts = Vec::new();
     let mut preconditions = Vec::new();
@@ -221,21 +221,21 @@ pub fn preview_sync_from_installation(
         blocked_conflicts,
         created_at,
     );
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
 pub fn preview_quick_migration(
-    app: &AppHandle,
+    ctx: &AppContext,
     source: InstallationRef,
     targets: Vec<AgentTarget>,
     method: String,
 ) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+    let settings = load_settings(ctx)?;
     let source_path = PathBuf::from(&source.entry_path);
     let plan_id = plan_id("quick-migrate");
     let created_at = Utc::now().to_rfc3339();
-    let backup_root = app_data_dir(app)?.join("backups").join(&plan_id);
+    let backup_root = app_data_dir(ctx)?.join("backups").join(&plan_id);
     let mut operations = Vec::new();
     let mut blocked_conflicts = Vec::new();
     let mut preconditions = Vec::new();
@@ -274,21 +274,21 @@ pub fn preview_quick_migration(
         blocked_conflicts,
         created_at,
     );
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
 pub fn preview_batch_sync(
-    app: &AppHandle,
+    ctx: &AppContext,
     sources: Vec<InstallationRef>,
     targets: Vec<AgentTarget>,
     replacements: Vec<SyncReplacement>,
 ) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+    let settings = load_settings(ctx)?;
     let library_path = PathBuf::from(&settings.library_path);
     let plan_id = plan_id("batch-sync");
     let created_at = Utc::now().to_rfc3339();
-    let backup_root = backup_root_for_plan(app, &settings, &plan_id)?;
+    let backup_root = backup_root_for_plan(ctx, &settings, &plan_id)?;
     let mut operations = Vec::new();
     let mut blocked_conflicts = Vec::new();
     let mut preconditions = Vec::new();
@@ -404,20 +404,20 @@ pub fn preview_batch_sync(
         blocked_conflicts,
         created_at,
     );
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
 pub fn preview_batch_quick_migration(
-    app: &AppHandle,
+    ctx: &AppContext,
     sources: Vec<InstallationRef>,
     targets: Vec<AgentTarget>,
     method: String,
 ) -> Result<SyncPlan, String> {
-    let settings = load_settings(app)?;
+    let settings = load_settings(ctx)?;
     let plan_id = plan_id("batch-quick-migrate");
     let created_at = Utc::now().to_rfc3339();
-    let backup_root = app_data_dir(app)?.join("backups").join(&plan_id);
+    let backup_root = app_data_dir(ctx)?.join("backups").join(&plan_id);
     let mut operations = Vec::new();
     let mut blocked_conflicts = Vec::new();
     let mut preconditions = Vec::new();
@@ -467,7 +467,7 @@ pub fn preview_batch_quick_migration(
         blocked_conflicts,
         created_at,
     );
-    save_plan(app, &plan)?;
+    save_plan(ctx, &plan)?;
     Ok(plan)
 }
 
@@ -688,7 +688,7 @@ fn replacement_selected(
 }
 
 fn backup_root_for_plan(
-    app: &AppHandle,
+    ctx: &AppContext,
     settings: &crate::models::Settings,
     plan_id: &str,
 ) -> Result<PathBuf, String> {
@@ -696,7 +696,7 @@ fn backup_root_for_plan(
     let backup_home = library_path
         .parent()
         .map(Path::to_path_buf)
-        .unwrap_or(app_data_dir(app)?);
+        .unwrap_or(app_data_dir(ctx)?);
     Ok(backup_home.join("backups").join(plan_id))
 }
 
@@ -730,8 +730,8 @@ fn sync_plan_from_parts(
     }
 }
 
-pub fn apply_plan(app: &AppHandle, plan_id: String) -> Result<ApplyResult, String> {
-    let plan = load_plan(app, &plan_id)?;
+pub fn apply_plan(ctx: &AppContext, plan_id: String) -> Result<ApplyResult, String> {
+    let plan = load_plan(ctx, &plan_id)?;
     let mut applied_operations = Vec::new();
     let mut skipped_operations = Vec::new();
     let mut errors = Vec::new();
@@ -797,15 +797,15 @@ pub fn apply_plan(app: &AppHandle, plan_id: String) -> Result<ApplyResult, Strin
         }
     }
 
-    write_history(app, &plan, &applied_operations, &errors)?;
+    write_history(ctx, &plan, &applied_operations, &errors)?;
     if plan.kind == "adopt" && errors.is_empty() {
         let snapshot = scan(
-            app,
+            ctx,
             ScanOptions {
                 include_orphaned: false,
             },
         )?;
-        write_library_index(app, &snapshot)?;
+        write_library_index(ctx, &snapshot)?;
     }
 
     Ok(ApplyResult {
@@ -1215,12 +1215,12 @@ fn required_path(value: Option<&str>, operation: &SyncOperation) -> Result<PathB
         .ok_or_else(|| format!("操作 {} 缺少必要路径", operation.id))
 }
 
-fn plans_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("plans"))
+fn plans_dir(ctx: &AppContext) -> Result<PathBuf, String> {
+    Ok(app_data_dir(ctx)?.join("plans"))
 }
 
-fn save_plan(app: &AppHandle, plan: &SyncPlan) -> Result<(), String> {
-    let dir = plans_dir(app)?;
+fn save_plan(ctx: &AppContext, plan: &SyncPlan) -> Result<(), String> {
+    let dir = plans_dir(ctx)?;
     ensure_dir(&dir)?;
     let path = dir.join(format!("{}.json", plan.plan_id));
     let text = serde_json::to_string_pretty(plan)
@@ -1233,8 +1233,8 @@ fn save_plan(app: &AppHandle, plan: &SyncPlan) -> Result<(), String> {
     })
 }
 
-fn load_plan(app: &AppHandle, plan_id: &str) -> Result<SyncPlan, String> {
-    let path = plans_dir(app)?.join(format!("{plan_id}.json"));
+fn load_plan(ctx: &AppContext, plan_id: &str) -> Result<SyncPlan, String> {
+    let path = plans_dir(ctx)?.join(format!("{plan_id}.json"));
     let text = fs::read_to_string(&path).map_err(|error| {
         format!(
             "Unable to read sync plan {}: {error}",
@@ -1250,12 +1250,12 @@ fn load_plan(app: &AppHandle, plan_id: &str) -> Result<SyncPlan, String> {
 }
 
 fn write_history(
-    app: &AppHandle,
+    ctx: &AppContext,
     plan: &SyncPlan,
     applied_operations: &[String],
     errors: &[String],
 ) -> Result<(), String> {
-    let path = app_data_dir(app)?.join("sync-history.json");
+    let path = app_data_dir(ctx)?.join("sync-history.json");
     let mut history = if path.exists() {
         fs::read_to_string(&path)
             .ok()

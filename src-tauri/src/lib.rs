@@ -1,11 +1,25 @@
+#[cfg(feature = "tauri-shell")]
 mod commands;
-mod fs_ops;
-mod models;
-mod registry;
-mod scanner;
-mod settings;
-mod sync_plan;
+pub mod context;
+pub mod fs_ops;
+pub mod models;
+pub mod registry;
+pub mod scanner;
+pub mod settings;
+pub mod sync_plan;
 
+#[cfg(feature = "tauri-shell")]
+pub(crate) fn app_context(app: &tauri::AppHandle) -> Result<context::AppContext, String> {
+    use tauri::Manager;
+
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Unable to resolve app data directory: {error}"))?;
+    Ok(context::AppContext::new(data_dir, fs_ops::home_dir()))
+}
+
+#[cfg(feature = "tauri-shell")]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

@@ -16,15 +16,24 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = ["tauri-shell"]
+tauri-shell = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-opener"]
+
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
 walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "oh-my-skills"
+path = "src/main.rs"
+required-features = ["tauri-shell"]

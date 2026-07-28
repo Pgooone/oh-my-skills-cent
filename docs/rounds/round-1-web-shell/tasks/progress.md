@@ -3,7 +3,7 @@
 > 每卡完成 = 实现 agent 交付 + 独立 verifier 复跑通过 + lead 复核 git 实盘 + commit。
 
 ## 批次 1 · 承重墙 spike
-- [ ] core-context
+- [x] core-context（ce0607a 之后单独 commit；verifier 通过，lead 复核 39/39 绿）
 
 ## 批次 2 · 并行
 - [ ] web-server

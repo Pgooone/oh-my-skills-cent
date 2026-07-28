@@ -1,26 +1,19 @@
+use crate::context::AppContext;
 use crate::fs_ops::{ensure_dir, path_to_string};
 use crate::models::{CustomRoot, Settings};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
 
-pub fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map_err(|error| format!("Unable to resolve app data directory: {error}"))
+pub fn app_data_dir(ctx: &AppContext) -> Result<PathBuf, String> {
+    Ok(ctx.data_dir().to_path_buf())
 }
 
-pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("settings.json"))
+pub fn settings_path(ctx: &AppContext) -> Result<PathBuf, String> {
+    Ok(app_data_dir(ctx)?.join("settings.json"))
 }
 
-pub fn default_settings(app: &AppHandle) -> Result<Settings, String> {
-    let library_path = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("Unable to resolve home directory: {error}"))?
-        .join(".oh-my-skills")
-        .join("skills");
+pub fn default_settings(ctx: &AppContext) -> Result<Settings, String> {
+    let library_path = ctx.home_dir().join(".oh-my-skills").join("skills");
     Ok(Settings {
         library_path: path_to_string(&library_path),
         project_folders: Vec::new(),
@@ -30,12 +23,12 @@ pub fn default_settings(app: &AppHandle) -> Result<Settings, String> {
     })
 }
 
-pub fn load_settings(app: &AppHandle) -> Result<Settings, String> {
-    let default = default_settings(app)?;
-    let path = settings_path(app)?;
+pub fn load_settings(ctx: &AppContext) -> Result<Settings, String> {
+    let default = default_settings(ctx)?;
+    let path = settings_path(ctx)?;
     if !path.exists() {
         ensure_dir(path.parent().ok_or("Settings path has no parent")?)?;
-        save_settings(app, &default)?;
+        save_settings(ctx, &default)?;
         return Ok(default);
     }
 
@@ -62,8 +55,8 @@ pub fn load_settings(app: &AppHandle) -> Result<Settings, String> {
     Ok(settings)
 }
 
-pub fn save_settings(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = settings_path(app)?;
+pub fn save_settings(ctx: &AppContext, settings: &Settings) -> Result<(), String> {
+    let path = settings_path(ctx)?;
     ensure_dir(path.parent().ok_or("Settings path has no parent")?)?;
     ensure_dir(PathBuf::from(&settings.library_path).as_path())?;
     let text = serde_json::to_string_pretty(settings)

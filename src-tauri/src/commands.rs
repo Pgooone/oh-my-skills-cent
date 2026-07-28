@@ -3,7 +3,7 @@ use crate::models::{
     ScanOptions, Settings, SkillContent, SkillLockEntry, SkillLockFile, SkillRef, SkillUpdateCheck,
     SyncPlan, SyncReplacement,
 };
-use crate::{fs_ops, registry, scanner, settings, sync_plan};
+use crate::{app_context, fs_ops, registry, scanner, settings, sync_plan};
 use chrono::Utc;
 use std::collections::BTreeMap;
 use std::fs;
@@ -13,13 +13,15 @@ use tauri::AppHandle;
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
-    settings::load_settings(&app)
+    let ctx = app_context(&app)?;
+    settings::load_settings(&ctx)
 }
 
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
-    settings::save_settings(&app, &settings)?;
-    settings::load_settings(&app)
+    let ctx = app_context(&app)?;
+    settings::save_settings(&ctx, &settings)?;
+    settings::load_settings(&ctx)
 }
 
 #[tauri::command]
@@ -27,20 +29,22 @@ pub fn scan_inventory(
     app: AppHandle,
     options: Option<ScanOptions>,
 ) -> Result<InventorySnapshot, String> {
+    let ctx = app_context(&app)?;
     let snapshot = scanner::scan(
-        &app,
+        &ctx,
         options.unwrap_or(ScanOptions {
             include_orphaned: false,
         }),
     )?;
-    scanner::write_library_index(&app, &snapshot)?;
-    scanner::write_inventory_cache(&app, &snapshot)?;
+    scanner::write_library_index(&ctx, &snapshot)?;
+    scanner::write_inventory_cache(&ctx, &snapshot)?;
     Ok(snapshot)
 }
 
 #[tauri::command]
 pub fn read_inventory_cache(app: AppHandle) -> Result<Option<InventorySnapshot>, String> {
-    scanner::read_inventory_cache(&app)
+    let ctx = app_context(&app)?;
+    scanner::read_inventory_cache(&ctx)
 }
 
 #[tauri::command]
@@ -48,7 +52,8 @@ pub fn discover_project_workspaces(
     app: AppHandle,
     base_path: String,
 ) -> Result<Vec<ProjectWorkspaceCandidate>, String> {
-    let settings = settings::load_settings(&app)?;
+    let ctx = app_context(&app)?;
+    let settings = settings::load_settings(&ctx)?;
     registry::discover_project_workspaces(&base_path, &settings)
 }
 
@@ -233,8 +238,9 @@ pub fn check_skills_sh_update(
     source_url: String,
     skill_path: Option<String>,
 ) -> Result<SkillUpdateCheck, String> {
+    let ctx = app_context(&app)?;
     let local_path = fs_ops::expand_home(&entry_path);
-    let remote_path = checkout_skills_sh_source(&app, &slug, &source_url, skill_path.as_deref())?;
+    let remote_path = checkout_skills_sh_source(&ctx, &slug, &source_url, skill_path.as_deref())?;
     let local_hash = fs_ops::hash_dir(&local_path)?;
     let remote_hash = fs_ops::hash_dir(&remote_path)?;
     let available = local_hash != remote_hash;
@@ -255,6 +261,7 @@ pub fn update_skills_sh_skill(
     source_url: String,
     skill_path: Option<String>,
 ) -> Result<SkillUpdateCheck, String> {
+    let ctx = app_context(&app)?;
     let local_path = fs_ops::expand_home(&entry_path);
     if !is_agents_skill_path(&local_path, &slug) {
         return Err(format!(
@@ -263,11 +270,11 @@ pub fn update_skills_sh_skill(
         ));
     }
 
-    let remote_path = checkout_skills_sh_source(&app, &slug, &source_url, skill_path.as_deref())?;
+    let remote_path = checkout_skills_sh_source(&ctx, &slug, &source_url, skill_path.as_deref())?;
     let local_hash = fs_ops::hash_dir(&local_path).ok();
     let remote_hash = fs_ops::hash_dir(&remote_path)?;
 
-    let backup_root = crate::settings::app_data_dir(&app)?
+    let backup_root = crate::settings::app_data_dir(&ctx)?
         .join("backups")
         .join("skills-sh-updates")
         .join(Utc::now().format("%Y%m%d%H%M%S").to_string());
@@ -288,7 +295,8 @@ pub fn update_skills_sh_skill(
 
 #[tauri::command]
 pub fn preview_adopt(app: AppHandle, source: InstallationRef) -> Result<SyncPlan, String> {
-    sync_plan::preview_adopt(&app, source)
+    let ctx = app_context(&app)?;
+    sync_plan::preview_adopt(&ctx, source)
 }
 
 #[tauri::command]
@@ -298,7 +306,8 @@ pub fn preview_sync(
     targets: Vec<AgentTarget>,
     replacements: Option<Vec<SyncReplacement>>,
 ) -> Result<SyncPlan, String> {
-    sync_plan::preview_sync(&app, skill_id, targets, replacements.unwrap_or_default())
+    let ctx = app_context(&app)?;
+    sync_plan::preview_sync(&ctx, skill_id, targets, replacements.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -308,7 +317,8 @@ pub fn preview_sync_from_installation(
     targets: Vec<AgentTarget>,
     replacements: Option<Vec<SyncReplacement>>,
 ) -> Result<SyncPlan, String> {
-    sync_plan::preview_sync_from_installation(&app, source, targets, replacements.unwrap_or_default())
+    let ctx = app_context(&app)?;
+    sync_plan::preview_sync_from_installation(&ctx, source, targets, replacements.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -318,7 +328,8 @@ pub fn preview_quick_migration(
     targets: Vec<AgentTarget>,
     method: String,
 ) -> Result<SyncPlan, String> {
-    sync_plan::preview_quick_migration(&app, source, targets, method)
+    let ctx = app_context(&app)?;
+    sync_plan::preview_quick_migration(&ctx, source, targets, method)
 }
 
 #[tauri::command]
@@ -328,7 +339,8 @@ pub fn preview_batch_sync(
     targets: Vec<AgentTarget>,
     replacements: Option<Vec<SyncReplacement>>,
 ) -> Result<SyncPlan, String> {
-    sync_plan::preview_batch_sync(&app, sources, targets, replacements.unwrap_or_default())
+    let ctx = app_context(&app)?;
+    sync_plan::preview_batch_sync(&ctx, sources, targets, replacements.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -338,22 +350,24 @@ pub fn preview_batch_quick_migration(
     targets: Vec<AgentTarget>,
     method: String,
 ) -> Result<SyncPlan, String> {
-    sync_plan::preview_batch_quick_migration(&app, sources, targets, method)
+    let ctx = app_context(&app)?;
+    sync_plan::preview_batch_quick_migration(&ctx, sources, targets, method)
 }
 
 #[tauri::command]
 pub fn apply_sync_plan(app: AppHandle, plan_id: String) -> Result<ApplyResult, String> {
-    sync_plan::apply_plan(&app, plan_id)
+    let ctx = app_context(&app)?;
+    sync_plan::apply_plan(&ctx, plan_id)
 }
 
 fn checkout_skills_sh_source(
-    app: &AppHandle,
+    ctx: &crate::context::AppContext,
     slug: &str,
     source_url: &str,
     skill_path: Option<&str>,
 ) -> Result<PathBuf, String> {
     let clone_url = normalize_github_url(source_url)?;
-    let checkout_root = crate::settings::app_data_dir(app)?
+    let checkout_root = crate::settings::app_data_dir(ctx)?
         .join("updates")
         .join(format!("{}-{}", slug, Utc::now().timestamp_millis()));
     let repo_path = checkout_root.join("repo");

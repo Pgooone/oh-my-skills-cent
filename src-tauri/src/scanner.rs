@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use crate::fs_ops::{ensure_dir, expand_home, hash_dir, path_to_string, skill_slug_from_path};
 use crate::models::{
     AgentDefinition, InventorySnapshot, ResolvedRoot, ScanOptions, SkillContent, SkillFrontmatter,
@@ -11,11 +12,10 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
 
-pub fn scan(app: &AppHandle, options: ScanOptions) -> Result<InventorySnapshot, String> {
-    let settings = load_settings(app)?;
-    let app_data = app_data_dir(app)?;
+pub fn scan(ctx: &AppContext, options: ScanOptions) -> Result<InventorySnapshot, String> {
+    let settings = load_settings(ctx)?;
+    let app_data = app_data_dir(ctx)?;
     let library_path = PathBuf::from(&settings.library_path);
     let mut roots = resolve_roots(&settings, options.include_orphaned);
     roots.extend(managed_project_roots_from_history(&app_data)?);
@@ -130,20 +130,20 @@ pub fn scan(app: &AppHandle, options: ScanOptions) -> Result<InventorySnapshot, 
     })
 }
 
-pub fn inventory_cache_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("inventory-cache.json"))
+pub fn inventory_cache_path(ctx: &AppContext) -> Result<PathBuf, String> {
+    Ok(app_data_dir(ctx)?.join("inventory-cache.json"))
 }
 
-pub fn read_inventory_cache(app: &AppHandle) -> Result<Option<InventorySnapshot>, String> {
-    let path = inventory_cache_path(app)?;
+pub fn read_inventory_cache(ctx: &AppContext) -> Result<Option<InventorySnapshot>, String> {
+    let path = inventory_cache_path(ctx)?;
     let Ok(text) = fs::read_to_string(&path) else {
         return Ok(None);
     };
     Ok(serde_json::from_str::<InventorySnapshot>(&text).ok())
 }
 
-pub fn write_inventory_cache(app: &AppHandle, snapshot: &InventorySnapshot) -> Result<(), String> {
-    let path = inventory_cache_path(app)?;
+pub fn write_inventory_cache(ctx: &AppContext, snapshot: &InventorySnapshot) -> Result<(), String> {
+    let path = inventory_cache_path(ctx)?;
     ensure_dir(path.parent().ok_or("Inventory cache path has no parent")?)?;
     let text = serde_json::to_string_pretty(snapshot)
         .map_err(|error| format!("Unable to serialize inventory cache: {error}"))?;
@@ -155,8 +155,8 @@ pub fn write_inventory_cache(app: &AppHandle, snapshot: &InventorySnapshot) -> R
     })
 }
 
-pub fn write_library_index(app: &AppHandle, snapshot: &InventorySnapshot) -> Result<(), String> {
-    let settings = load_settings(app)?;
+pub fn write_library_index(ctx: &AppContext, snapshot: &InventorySnapshot) -> Result<(), String> {
+    let settings = load_settings(ctx)?;
     let index_path = PathBuf::from(settings.library_path)
         .parent()
         .map(|parent| parent.join("index.json"))
