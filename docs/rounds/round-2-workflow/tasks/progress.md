@@ -14,8 +14,8 @@
 - [x] workflow-use（verifier pass（自建探针 8 case 全过）；lead 裁决 ⑦ 打包形态跳过独立同步 ops，agent team 返工闭环后 78/103 双绿）
 
 ## 批次 4 · 并行
-- [ ] workflows-api
-- [ ] workflows-ui
+- [x] workflows-api（verifier pass；7+7 薄转发、cache-first 断网探针、坏 slug 负例组、D8 覆盖实证；lead 复核 79/109）
+- [x] workflows-ui（verifier pass；真浏览器注册表下载→详情→占位 banner 全流程、pageErrors=0；两处 lead 裁决落地：WorkflowDetail 形状、refresh cache-first）
 
 ## 最终验收（proposal §6，判据纪律见 docs/acceptance-standards.md）
 - [ ] 真浏览器全流程：浏览注册表 → 下载软件开发工作流 → 详情（分组/步骤/缺失标记）→ 使用（Sync Plan 预览含下载 → 执行）→ 入口清单落目标目录

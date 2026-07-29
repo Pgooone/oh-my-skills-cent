@@ -118,6 +118,20 @@ export function SettingsSheet({
                 />
               </div>
 
+              <div className="settings-row settings-row-stack" role="listitem">
+                <div className="settings-row-copy">
+                  <strong>工作流注册表 URL</strong>
+                  <span>远程工作流列表来源的 Git 仓库地址；留空使用官方注册表，修改后下次刷新远程列表生效。</span>
+                </div>
+                <input
+                  className="settings-path-input"
+                  value={settings.workflowRegistryUrl ?? ""}
+                  onChange={(event) => onChange({ ...settings, workflowRegistryUrl: event.target.value })}
+                  placeholder="https://github.com/Pgooone/oh-my-skills-workflows.git"
+                  spellCheck={false}
+                />
+              </div>
+
               <div className="settings-row" role="listitem">
                 <div className="settings-row-copy">
                   <strong>显示原始文件路径</strong>

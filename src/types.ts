@@ -4,6 +4,7 @@ export type Settings = {
   customRoots: CustomRoot[];
   showRawPaths: boolean;
   language: string;
+  workflowRegistryUrl?: string;
 };
 
 export type CustomRoot = {
@@ -190,3 +191,110 @@ export type ApplyResult = {
   errors: string[];
   inventoryRefreshRecommended: boolean;
 };
+
+// ===== 工作流（round-2，镜像 src-tauri workflow.rs / workflow_registry.rs / workflow_use.rs）=====
+
+export type Workflow = {
+  name: string;
+  slug: string;
+  version: string;
+  description: string;
+  author?: string;
+  tags: string[];
+  icon?: string;
+  groups: WorkflowGroup[];
+  steps: WorkflowStep[];
+};
+
+export type WorkflowGroup = {
+  id: string;
+  name: string;
+};
+
+export type WorkflowStep = {
+  name: string;
+  group: string;
+  description: string;
+  skills: StepSkill[];
+};
+
+/** StepSkill 为 untagged 枚举：SkillRef 或 { placeholder }，靠 "placeholder" in skill 判别。 */
+export type StepSkill = SkillRef | WorkflowStepPlaceholder;
+
+export type WorkflowStepPlaceholder = {
+  placeholder: string;
+};
+
+export type SkillRef = {
+  /** v1 仅 "github" */
+  sourceType: string;
+  sourceUrl: string;
+  slug: string;
+  skillPath?: string;
+};
+
+export type InstalledWorkflow = {
+  slug: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  tags: string[];
+  icon?: string;
+  stepCount: number;
+  hasPlaceholder: boolean;
+  error?: string;
+};
+
+export type RemoteWorkflowSummary = {
+  slug: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  tags: string[];
+  icon?: string;
+  path: string;
+  installed: boolean;
+};
+
+/** StepSkillStatus 的 serde 外部标签形状："ready" | "missing" | { placeholder: string } */
+export type StepSkillStatus = "ready" | "missing" | { placeholder: string };
+
+export type StepSkillView = {
+  /** "ref" | "placeholder" */
+  kind: string;
+  slug?: string;
+  sourceUrl?: string;
+  skillPath?: string;
+  placeholder?: string;
+};
+
+/** get_workflow_detail 返回的每步视图（UI 归一化后的形状，与 workflow.steps 对齐）。 */
+export type WorkflowDetailStep = {
+  name: string;
+  group: string;
+  description: string;
+  skills: WorkflowDetailSkill[];
+};
+
+export type WorkflowDetailSkill = {
+  kind: string;
+  slug?: string;
+  sourceUrl?: string;
+  skillPath?: string;
+  placeholder?: string;
+  status: StepSkillStatus;
+};
+
+/**
+ * get_workflow_detail 的线形状：statuses 与 workflow.steps 对齐的
+ * [StepSkillView, StepSkillStatus] 元组嵌套（Rust Vec<Vec<(view, status)>> 直转）。
+ */
+export type WorkflowDetail = {
+  workflow: Workflow;
+  statuses: [StepSkillView, StepSkillStatus][][];
+};
+
+/** preview_use_workflow 的输出形态（OutputForm serde camelCase）。 */
+export type OutputForm = "entryManifest" | "packagedSkill";

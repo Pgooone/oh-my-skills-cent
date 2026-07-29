@@ -10,6 +10,7 @@ import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibrary
 import type { QuickMigrationMethod, SkillWorkspace, SyncMode, View } from "./uiTypes";
 import { SkillsView } from "./views/SkillsView";
 import { SyncView } from "./views/SyncView";
+import { WorkflowsView } from "./views/WorkflowsView";
 import type {
   AgentTarget,
   ApplyResult,
@@ -710,6 +711,9 @@ export default function App() {
           <TabButton active={view === "sync"} onClick={() => setView("sync")}>
             同步 Skills
           </TabButton>
+          <TabButton active={view === "workflows"} onClick={() => setView("workflows")}>
+            工作流
+          </TabButton>
         </div>
 
 
@@ -817,6 +821,16 @@ export default function App() {
             onChooseProject={chooseSyncProject}
             onApply={() => void applyPlan()}
             onGoSkills={() => setView("skills")}
+          />
+        )}
+
+        {view === "workflows" && (
+          <WorkflowsView
+            agents={installedAgents.length ? installedAgents : agents}
+            librarySkills={librarySkills}
+            skillLocks={skillLocks}
+            settings={settings}
+            onRequestScan={() => void refreshInventory()}
           />
         )}
       </section>
