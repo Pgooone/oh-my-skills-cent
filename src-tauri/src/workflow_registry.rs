@@ -48,6 +48,13 @@ pub fn fetch_index(
     fetch_index_from_source(ctx, &source)
 }
 
+/// 只读本地缓存的注册表索引，不触发拉取（批次 4 追加，cache-first 语义用）。
+/// 无可用缓存（文件缺失或内容损坏）时返回 None，调用方应回退 fetch_index。
+pub fn read_cached_index(ctx: &AppContext) -> Option<Vec<RemoteWorkflowSummary>> {
+    let text = fs::read_to_string(current_dir(ctx).join("index.json")).ok()?;
+    parse_index(ctx, &text).ok()
+}
+
 pub fn fetch_workflow(
     ctx: &AppContext,
     registry_url: &str,
@@ -192,20 +199,28 @@ fn read_current_index(ctx: &AppContext) -> Result<Vec<RemoteWorkflowSummary>, St
             path_to_string(&file)
         )
     })?;
-    let index: RegistryIndex = serde_json::from_str(&text).map_err(|error| {
+    parse_index(ctx, &text).map_err(|error| {
         format!(
             "Unable to parse registry index at {}: {error}",
             path_to_string(&file)
         )
-    })?;
+    })
+}
 
+/// fetch_index 与 read_cached_index 共用的装配逻辑：解析 index.json 文本，
+/// 并对照 `data_dir/workflows/` 计算各条目的 installed 标记。
+fn parse_index(
+    ctx: &AppContext,
+    text: &str,
+) -> Result<Vec<RemoteWorkflowSummary>, serde_json::Error> {
+    let index: RegistryIndex = serde_json::from_str(text)?;
     let installed_root = workflows_dir(ctx);
     Ok(index
         .workflows
         .into_iter()
         .map(|mut summary| {
-            summary.installed = is_safe_slug(&summary.slug)
-                && installed_root.join(&summary.slug).is_dir();
+            summary.installed =
+                is_safe_slug(&summary.slug) && installed_root.join(&summary.slug).is_dir();
             summary
         })
         .collect())
@@ -347,6 +362,42 @@ mod tests {
 
     fn repo_source(fixture: &tempfile::TempDir) -> String {
         path_to_string(&fixture.path().join("repo"))
+    }
+
+    #[test]
+    fn read_cached_index_serves_cache_without_pulling() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let ctx = test_ctx(&temp);
+        // 无缓存 → None
+        assert_eq!(read_cached_index(&ctx), None);
+
+        // 手工铺缓存（不经 git clone）：current/index.json + 一个已安装工作流目录
+        let current = ctx.data_dir().join("registry").join("current");
+        fs::create_dir_all(&current).expect("cache dir");
+        fs::write(
+            current.join("index.json"),
+            concat!(
+                "{\"version\":1,\"workflows\":[",
+                "{\"slug\":\"alpha-flow\",\"name\":\"Alpha\",\"version\":\"0.1.0\",",
+                "\"description\":\"a\",\"path\":\"alpha-flow\"},",
+                "{\"slug\":\"beta-flow\",\"name\":\"Beta\",\"version\":\"0.2.0\",",
+                "\"description\":\"b\",\"path\":\"flows/beta-flow\"}",
+                "]}"
+            ),
+        )
+        .expect("write cached index");
+        fs::create_dir_all(workflows_dir(&ctx).join("alpha-flow")).expect("installed dir");
+
+        let cached = read_cached_index(&ctx).expect("cached index");
+        assert_eq!(cached.len(), 2);
+        assert_eq!(cached[0].slug, "alpha-flow");
+        assert!(cached[0].installed);
+        assert_eq!(cached[1].slug, "beta-flow");
+        assert!(!cached[1].installed);
+
+        // 缓存损坏 → None（调用方回退 fetch_index）
+        fs::write(current.join("index.json"), "{ not valid json").expect("corrupt");
+        assert_eq!(read_cached_index(&ctx), None);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! 12 个既有 command 的 HTTP endpoint（薄转发，NFR-2）+ 新增 `list_dir`
-//! （dir-browser，D3 目录选择替代）+ `GET /api/health`。
+//! （dir-browser，D3 目录选择替代）+ Round 2 workflows 组（7 个薄转发，
+//! 见文件末尾 section）+ `GET /api/health`。
 //!
 //! 契约（设计 §2.3）：
 //! - `POST /api/commands/{command_name}`，请求 JSON = 参数 map（camelCase，同 tauri invoke）
@@ -18,7 +19,9 @@ use super::AppState;
 use crate::models::{
     AgentTarget, InstallationRef, ScanOptions, Settings, SyncReplacement,
 };
-use crate::{registry, scanner, settings, skill_ops, sync_plan};
+use crate::workflow::Workflow;
+use crate::workflow_use::OutputForm;
+use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_use};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -378,4 +381,152 @@ pub async fn list_dir(
         entries,
     })
     .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Round 2 workflows-api：7 个 workflow endpoint 薄转发（NFR-2），apply 复用既有
+// apply_sync_plan。D8 guard 由路由层统一覆盖；本组无文件路径参数（slug 由核心
+// 校验 [a-z0-9-]+，失败即业务错误 422；download_workflow.path 原样下传，
+// traversal 由 registry-client 的 guard_registry_path 把关），jail 不涉及。
+// ---------------------------------------------------------------------------
+
+pub async fn list_installed_workflows(State(state): State<Arc<AppState>>) -> Response {
+    respond(workflow::list_installed(state.ctx()))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRemoteWorkflowsRequest {
+    pub refresh: Option<bool>,
+}
+
+pub async fn list_remote_workflows(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ListRemoteWorkflowsRequest>,
+) -> Response {
+    // cache-first（lead 裁决）：refresh=true 强制拉取；false/缺省时优先读缓存，
+    // 无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
+    if !request.refresh.unwrap_or(false) {
+        if let Some(cached) = workflow_registry::read_cached_index(state.ctx()) {
+            return Json(cached).into_response();
+        }
+    }
+    let registry_url = match workflow_registry_url(state.ctx()) {
+        Ok(url) => url,
+        Err(error) => return business_error(error),
+    };
+    respond(workflow_registry::fetch_index(state.ctx(), &registry_url))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetWorkflowDetailRequest {
+    pub slug: String,
+}
+
+pub async fn get_workflow_detail(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<GetWorkflowDetailRequest>,
+) -> Response {
+    let workflow = match workflow::load(state.ctx(), &request.slug) {
+        Ok(workflow) => workflow,
+        Err(error) => return business_error(error),
+    };
+    match workflow_use::compute_statuses(state.ctx(), &workflow) {
+        Ok(statuses) => Json(workflow_use::WorkflowDetail { workflow, statuses }).into_response(),
+        Err(error) => business_error(error),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadWorkflowRequest {
+    pub path: String,
+}
+
+pub async fn download_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<DownloadWorkflowRequest>,
+) -> Response {
+    let registry_url = match workflow_registry_url(state.ctx()) {
+        Ok(url) => url,
+        Err(error) => return business_error(error),
+    };
+    let slug = match workflow_registry::download_to_installed(
+        state.ctx(),
+        &registry_url,
+        &request.path,
+    ) {
+        Ok(slug) => slug,
+        Err(error) => return business_error(error),
+    };
+    let installed = match workflow::list_installed(state.ctx()) {
+        Ok(installed) => installed,
+        Err(error) => return business_error(error),
+    };
+    match installed.into_iter().find(|item| item.slug == slug) {
+        Some(item) => Json(item).into_response(),
+        None => business_error(format!(
+            "Downloaded workflow '{slug}' is missing from installed list"
+        )),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWorkflowRequest {
+    pub workflow: Workflow,
+    pub readme: Option<String>,
+}
+
+pub async fn save_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SaveWorkflowRequest>,
+) -> Response {
+    let slug = request.workflow.slug.clone();
+    // 返回裸 slug 字符串（JSON string），与 tauri 侧的 String 返回两壳一致。
+    respond(workflow::save(state.ctx(), &request.workflow, request.readme.as_deref()).map(|()| slug))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteWorkflowRequest {
+    pub slug: String,
+}
+
+pub async fn delete_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<DeleteWorkflowRequest>,
+) -> Response {
+    respond(workflow::delete(state.ctx(), &request.slug))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewUseWorkflowRequest {
+    pub slug: String,
+    pub targets: Vec<AgentTarget>,
+    pub method: String,
+    pub output_form: OutputForm,
+}
+
+pub async fn preview_use_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PreviewUseWorkflowRequest>,
+) -> Response {
+    respond(workflow_use::preview_use_workflow(
+        state.ctx(),
+        &request.slug,
+        request.targets,
+        request.method,
+        request.output_form,
+    ))
+}
+
+/// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
+fn workflow_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
+    Ok(settings::load_settings(ctx)?
+        .workflow_registry_url
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| settings::OFFICIAL_WORKFLOW_REGISTRY_URL.to_string()))
 }

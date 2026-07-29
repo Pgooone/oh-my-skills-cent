@@ -207,3 +207,95 @@ pub fn apply_sync_plan(app: AppHandle, plan_id: String) -> Result<ApplyResult, S
     let ctx = app_context(&app)?;
     sync_plan::apply_plan(&ctx, plan_id)
 }
+
+// ---------------------------------------------------------------------------
+// Round 2 workflows-api：7 个 workflow command 薄转发（NFR-2），apply 复用既有。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_installed_workflows(
+    app: AppHandle,
+) -> Result<Vec<crate::workflow::InstalledWorkflow>, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow::list_installed(&ctx)
+}
+
+#[tauri::command]
+pub fn list_remote_workflows(
+    app: AppHandle,
+    refresh: Option<bool>,
+) -> Result<Vec<crate::workflow_registry::RemoteWorkflowSummary>, String> {
+    let ctx = app_context(&app)?;
+    // cache-first（lead 裁决）：refresh=true 强制拉取；false/缺省时优先读缓存，
+    // 无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
+    if !refresh.unwrap_or(false) {
+        if let Some(cached) = crate::workflow_registry::read_cached_index(&ctx) {
+            return Ok(cached);
+        }
+    }
+    let registry_url = workflow_registry_url(&ctx)?;
+    crate::workflow_registry::fetch_index(&ctx, &registry_url)
+}
+
+#[tauri::command]
+pub fn get_workflow_detail(
+    app: AppHandle,
+    slug: String,
+) -> Result<crate::workflow_use::WorkflowDetail, String> {
+    let ctx = app_context(&app)?;
+    let workflow = crate::workflow::load(&ctx, &slug)?;
+    let statuses = crate::workflow_use::compute_statuses(&ctx, &workflow)?;
+    Ok(crate::workflow_use::WorkflowDetail { workflow, statuses })
+}
+
+#[tauri::command]
+pub fn download_workflow(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::workflow::InstalledWorkflow, String> {
+    let ctx = app_context(&app)?;
+    let registry_url = workflow_registry_url(&ctx)?;
+    // path 原样下传：traversal 防护由 registry-client 的 guard_registry_path 把关。
+    let slug = crate::workflow_registry::download_to_installed(&ctx, &registry_url, &path)?;
+    crate::workflow::list_installed(&ctx)?
+        .into_iter()
+        .find(|item| item.slug == slug)
+        .ok_or_else(|| format!("Downloaded workflow '{slug}' is missing from installed list"))
+}
+
+#[tauri::command]
+pub fn save_workflow(
+    app: AppHandle,
+    workflow: crate::workflow::Workflow,
+    readme: Option<String>,
+) -> Result<String, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow::save(&ctx, &workflow, readme.as_deref())?;
+    Ok(workflow.slug)
+}
+
+#[tauri::command]
+pub fn delete_workflow(app: AppHandle, slug: String) -> Result<(), String> {
+    let ctx = app_context(&app)?;
+    crate::workflow::delete(&ctx, &slug)
+}
+
+#[tauri::command]
+pub fn preview_use_workflow(
+    app: AppHandle,
+    slug: String,
+    targets: Vec<AgentTarget>,
+    method: String,
+    output_form: crate::workflow_use::OutputForm,
+) -> Result<SyncPlan, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_use::preview_use_workflow(&ctx, &slug, targets, method, output_form)
+}
+
+/// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
+fn workflow_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
+    Ok(settings::load_settings(ctx)?
+        .workflow_registry_url
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| settings::OFFICIAL_WORKFLOW_REGISTRY_URL.to_string()))
+}

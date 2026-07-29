@@ -104,6 +104,31 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(routes::remove_skill_entries),
         )
         .route("/api/commands/list_dir", post(routes::list_dir))
+        .route(
+            "/api/commands/list_installed_workflows",
+            post(routes::list_installed_workflows),
+        )
+        .route(
+            "/api/commands/list_remote_workflows",
+            post(routes::list_remote_workflows),
+        )
+        .route(
+            "/api/commands/get_workflow_detail",
+            post(routes::get_workflow_detail),
+        )
+        .route(
+            "/api/commands/download_workflow",
+            post(routes::download_workflow),
+        )
+        .route("/api/commands/save_workflow", post(routes::save_workflow))
+        .route(
+            "/api/commands/delete_workflow",
+            post(routes::delete_workflow),
+        )
+        .route(
+            "/api/commands/preview_use_workflow",
+            post(routes::preview_use_workflow),
+        )
         // D8：所有 /api 请求过 Host / Origin / Sec-Fetch-Site 校验。
         .route_layer(middleware::from_fn(guard::local_only_guard));
 
@@ -492,5 +517,363 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // -- workflows（Round 2 workflows-api）-----------------------------------
+
+    const ROUND_TRIP_WORKFLOW_JSON: &str = r#"{
+        "name": "回测流程",
+        "slug": "oms-web-round-trip",
+        "version": "0.1.0",
+        "description": "端点回测",
+        "groups": [{"id": "g", "name": "组"}],
+        "steps": [{
+            "name": "步骤一",
+            "group": "g",
+            "skills": [
+                {"sourceType": "github", "sourceUrl": "https://github.com/mattpocock/skills.git", "slug": "oms-web-test-missing"},
+                {"placeholder": "待补充"}
+            ]
+        }]
+    }"#;
+
+    #[tokio::test]
+    async fn workflows_save_list_delete_round_trip() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        // 初始为空
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/list_installed_workflows", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body.as_array().expect("array").len(), 0);
+
+        // save → 200 + 返回 slug
+        let save_body = serde_json::json!({
+            "workflow": serde_json::from_str::<serde_json::Value>(ROUND_TRIP_WORKFLOW_JSON)
+                .expect("workflow json"),
+            "readme": "# 回测"
+        })
+        .to_string();
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/save_workflow", &save_body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        // 返回裸 slug 字符串（与 tauri 侧 String 返回一致）
+        assert_eq!(
+            body.as_str().expect("slug string"),
+            "oms-web-round-trip"
+        );
+
+        // list → 含步骤数与占位标记
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/list_installed_workflows", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let items = body.as_array().expect("array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["slug"].as_str().expect("slug"), "oms-web-round-trip");
+        assert_eq!(items[0]["stepCount"].as_u64().expect("stepCount"), 1);
+        assert_eq!(
+            items[0]["hasPlaceholder"].as_bool().expect("hasPlaceholder"),
+            true
+        );
+
+        // delete → 200
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/delete_workflow",
+                r#"{"slug":"oms-web-round-trip"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 再次 list → 空
+        let response = app
+            .oneshot(post_json("/api/commands/list_installed_workflows", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body.as_array().expect("array").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_workflow_detail_returns_workflow_and_aligned_statuses() {
+        let (temp, state) = test_state();
+        // 中心库预置 ready skill；工作流引用 ready + missing + 占位
+        let ready = temp
+            .path()
+            .join("home")
+            .join(".oh-my-skills")
+            .join("skills")
+            .join("oms-web-ready");
+        std::fs::create_dir_all(&ready).expect("ready dir");
+        std::fs::write(
+            ready.join("SKILL.md"),
+            "---\nname: oms-web-ready\ndescription: ready\n---\n",
+        )
+        .expect("ready SKILL.md");
+        let dir = temp
+            .path()
+            .join("data")
+            .join("workflows")
+            .join("oms-web-detail-flow");
+        std::fs::create_dir_all(&dir).expect("workflow dir");
+        std::fs::write(
+            dir.join("workflow.yaml"),
+            "name: 详情流程\n\
+             slug: oms-web-detail-flow\n\
+             version: 0.1.0\n\
+             description: 详情回测\n\
+             groups:\n  - id: g\n    name: 组\n\
+             steps:\n  - name: 步骤一\n    group: g\n    skills:\n\
+             \x20     - sourceType: github\n\
+             \x20       sourceUrl: https://github.com/mattpocock/skills.git\n\
+             \x20       slug: oms-web-ready\n\
+             \x20     - sourceType: github\n\
+             \x20       sourceUrl: https://github.com/mattpocock/skills.git\n\
+             \x20       slug: oms-web-test-missing\n\
+             \x20     - placeholder: 待补充\n",
+        )
+        .expect("write workflow yaml");
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/get_workflow_detail",
+                r#"{"slug":"oms-web-detail-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+
+        assert_eq!(
+            body["workflow"]["slug"].as_str().expect("slug"),
+            "oms-web-detail-flow"
+        );
+        assert_eq!(
+            body["workflow"]["steps"][0]["name"].as_str().expect("step name"),
+            "步骤一"
+        );
+        // statuses 外层对齐 steps、内层对齐 skills；每项为 [view, status] 二元
+        // 数组；status serde 形状："ready" / "missing" / {"placeholder": "..."}
+        let statuses = body["statuses"].as_array().expect("statuses");
+        assert_eq!(statuses.len(), 1);
+        let first = statuses[0].as_array().expect("step statuses");
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0][0]["kind"].as_str().expect("kind"), "ref");
+        assert_eq!(
+            first[0][0]["slug"].as_str().expect("view slug"),
+            "oms-web-ready"
+        );
+        assert_eq!(first[0][1], serde_json::json!("ready"));
+        assert_eq!(first[1][1], serde_json::json!("missing"));
+        assert_eq!(
+            first[2][0]["kind"].as_str().expect("kind"),
+            "placeholder"
+        );
+        assert_eq!(
+            first[2][1],
+            serde_json::json!({"placeholder": "待补充"})
+        );
+    }
+
+    #[tokio::test]
+    async fn list_remote_workflows_cache_first_without_network() {
+        let (temp, state) = test_state();
+        // 铺注册表缓存（不经 git clone）：current/index.json；alpha 已安装
+        let current = temp.path().join("data").join("registry").join("current");
+        std::fs::create_dir_all(&current).expect("cache dir");
+        std::fs::write(
+            current.join("index.json"),
+            concat!(
+                "{\"version\":1,\"workflows\":[",
+                "{\"slug\":\"alpha-flow\",\"name\":\"Alpha\",\"version\":\"0.1.0\",",
+                "\"description\":\"a\",\"path\":\"alpha-flow\"},",
+                "{\"slug\":\"beta-flow\",\"name\":\"Beta\",\"version\":\"0.2.0\",",
+                "\"description\":\"b\",\"path\":\"flows/beta-flow\"}",
+                "]}"
+            ),
+        )
+        .expect("cached index");
+        std::fs::create_dir_all(
+            temp.path().join("data").join("workflows").join("alpha-flow"),
+        )
+        .expect("installed dir");
+        let app = build_router(state);
+
+        // refresh 缺省 → cache-first 直返（零网络）
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/list_remote_workflows", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let items = body.as_array().expect("array");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["slug"].as_str().expect("slug"), "alpha-flow");
+        assert_eq!(items[0]["installed"].as_bool().expect("installed"), true);
+        assert_eq!(items[1]["slug"].as_str().expect("slug"), "beta-flow");
+        assert_eq!(items[1]["installed"].as_bool().expect("installed"), false);
+
+        // refresh=false 显式同样走缓存
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/list_remote_workflows",
+                r#"{"refresh":false}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn preview_use_workflow_generates_plan() {
+        let (temp, state) = test_state();
+        // fixture：含一个中心库缺失的 ref + 一个占位（yaml 直接落盘，
+        // 核心 load 时校验通过：GitHub 来源）
+        let dir = temp
+            .path()
+            .join("data")
+            .join("workflows")
+            .join("oms-web-preview-flow");
+        std::fs::create_dir_all(&dir).expect("workflow dir");
+        std::fs::write(
+            dir.join("workflow.yaml"),
+            "name: 预览流程\n\
+             slug: oms-web-preview-flow\n\
+             version: 0.1.0\n\
+             description: 预览回测\n\
+             groups:\n  - id: g\n    name: 组\n\
+             steps:\n  - name: 步骤一\n    group: g\n    skills:\n\
+             \x20     - sourceType: github\n\
+             \x20       sourceUrl: https://github.com/mattpocock/skills.git\n\
+             \x20       slug: oms-web-test-missing\n\
+             \x20     - placeholder: 待补充\n",
+        )
+        .expect("write workflow yaml");
+        let app = build_router(state);
+
+        // 未知 agent id：roots 解析为空 → blocked 提示，plan 仍生成（ops 仅下载段）
+        let body = serde_json::json!({
+            "slug": "oms-web-preview-flow",
+            "targets": [{"agentId": "no-such-agent-xyz"}],
+            "method": "copy",
+            "outputForm": "entryManifest"
+        })
+        .to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/preview_use_workflow", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+
+        assert_eq!(body["kind"].as_str().expect("kind"), "workflow-use");
+        let operations = body["operations"].as_array().expect("operations");
+        assert_eq!(operations.len(), 1);
+        assert_eq!(
+            operations[0]["opType"].as_str().expect("opType"),
+            "download-to-library"
+        );
+        assert_eq!(
+            operations[0]["skillId"].as_str().expect("skillId"),
+            "oms-web-test-missing"
+        );
+        let preconditions = body["preconditions"].as_array().expect("preconditions");
+        assert!(
+            preconditions
+                .iter()
+                .any(|item| item.as_str().unwrap_or_default().contains("占位")),
+            "preconditions: {preconditions:?}"
+        );
+        assert_eq!(
+            body["riskLevel"].as_str().expect("riskLevel"),
+            "blocked"
+        );
+    }
+
+    // -- workflows 负例：坏 slug → 422（核心校验 [a-z0-9-]+ 浮出为业务错误）-----
+
+    #[tokio::test]
+    async fn workflow_endpoints_reject_bad_slugs() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        for slug in ["..", "../settings", "UPPER", "a/b", ""] {
+            let body = serde_json::json!({ "slug": slug }).to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/delete_workflow", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "delete slug '{slug}'"
+            );
+
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/get_workflow_detail", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "detail slug '{slug}'"
+            );
+
+            let body = serde_json::json!({
+                "slug": slug,
+                "targets": [],
+                "method": "copy",
+                "outputForm": "entryManifest"
+            })
+            .to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/preview_use_workflow", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "preview slug '{slug}'"
+            );
+        }
+
+        // save：workflow.slug 非法 → validate 拒绝，不落盘
+        let mut workflow: serde_json::Value =
+            serde_json::from_str(ROUND_TRIP_WORKFLOW_JSON).expect("workflow json");
+        workflow["slug"] = serde_json::Value::from("Bad Slug");
+        let body = serde_json::json!({ "workflow": workflow }).to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/save_workflow", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

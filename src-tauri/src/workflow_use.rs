@@ -60,6 +60,16 @@ pub enum OutputForm {
     PackagedSkill,
 }
 
+/// get_workflow_detail 的返回视图（批次 4 追加，两壳共享的单一来源）：
+/// 完整工作流定义 + compute_statuses 产物零改形直转（外层对齐 steps、
+/// 内层对齐 step.skills，调用方按下标配对）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowDetail {
+    pub workflow: Workflow,
+    pub statuses: Vec<Vec<(StepSkillView, StepSkillStatus)>>,
+}
+
 /// 按步骤对齐计算每个 skill 的就绪状态（外层 steps、内层 skills）。
 pub fn compute_statuses(
     ctx: &AppContext,

@@ -49,7 +49,14 @@ pub fn run() {
             commands::preview_quick_migration,
             commands::preview_batch_sync,
             commands::preview_batch_quick_migration,
-            commands::apply_sync_plan
+            commands::apply_sync_plan,
+            commands::list_installed_workflows,
+            commands::list_remote_workflows,
+            commands::get_workflow_detail,
+            commands::download_workflow,
+            commands::save_workflow,
+            commands::delete_workflow,
+            commands::preview_use_workflow
         ])
         .run(tauri::generate_context!())
         .expect("error while running Oh My Skills");
