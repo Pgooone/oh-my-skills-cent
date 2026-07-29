@@ -17,10 +17,7 @@
 - [ ] workflows-api
 - [ ] workflows-ui
 
-## 批次 5 · 末位固定收口卡（acceptance-standards §7）
-- [ ] e2e-acceptance（lead 亲跑真浏览器全流程 + 真实 Claude Code 消费验证 + 判据纪律 + 推送独立核实）
-
-## 最终验收（proposal §6）
+## 最终验收（proposal §6，判据纪律见 docs/acceptance-standards.md）
 - [ ] 真浏览器全流程：浏览注册表 → 下载软件开发工作流 → 详情（分组/步骤/缺失标记）→ 使用（Sync Plan 预览含下载 → 执行）→ 入口清单落目标目录
 - [ ] 打包 skill 形态生成 + 真实 Claude Code 会话验证可消费
 - [ ] 占位步骤醒目标记 + 使用时提示
