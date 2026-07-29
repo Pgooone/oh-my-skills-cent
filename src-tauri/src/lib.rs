@@ -8,6 +8,8 @@ pub mod scanner;
 pub mod settings;
 pub mod skill_ops;
 pub mod sync_plan;
+pub mod workflow;
+pub mod workflow_registry;
 #[cfg(feature = "web")]
 pub mod web;
 

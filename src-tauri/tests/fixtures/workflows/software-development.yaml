@@ -1,0 +1,42 @@
+name: 软件开发工作流
+slug: software-development
+version: 0.1.0
+description: 从需求澄清到领域建模再到测试驱动开发的标准软件开发流程
+author: Pgooone
+tags:
+  - software-development
+  - tdd
+  - requirements
+icon: code
+groups:
+  - id: requirements
+    name: 需求
+  - id: modeling
+    name: 记录
+  - id: coding
+    name: 编程
+steps:
+  - name: 需求澄清
+    group: requirements
+    description: 用逼问式访谈把模糊需求钉成清晰可实现的需求
+    skills:
+      - sourceType: github
+        sourceUrl: https://github.com/mattpocock/skills.git
+        slug: grill-me
+        skillPath: skills/productivity/grill-me
+  - name: 领域建模
+    group: modeling
+    description: 建立并打磨项目的领域模型，沉淀术语表与决策记录
+    skills:
+      - sourceType: github
+        sourceUrl: https://github.com/mattpocock/skills.git
+        slug: domain-modeling
+        skillPath: skills/engineering/domain-modeling
+  - name: 测试驱动开发
+    group: coding
+    description: 以测试先行的方式实现功能
+    skills:
+      - sourceType: github
+        sourceUrl: https://github.com/mattpocock/skills.git
+        slug: tdd
+        skillPath: skills/engineering/tdd

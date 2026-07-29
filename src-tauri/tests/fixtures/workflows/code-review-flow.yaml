@@ -1,0 +1,28 @@
+name: 代码评审工作流
+slug: code-review-flow
+version: 0.1.0
+description: 评审 → 修复的最小代码评审闭环（含占位步骤示例）
+author: Pgooone
+tags:
+  - code-review
+  - quality
+icon: check
+groups:
+  - id: review
+    name: 评审
+  - id: fix
+    name: 修复
+steps:
+  - name: 代码评审
+    group: review
+    description: 对照仓库标准与需求规格评审变更
+    skills:
+      - sourceType: github
+        sourceUrl: https://github.com/mattpocock/skills.git
+        slug: code-review
+        skillPath: skills/engineering/code-review
+  - name: 问题修复
+    group: fix
+    description: 按评审结论逐项修复（修复方式待选定）
+    skills:
+      - placeholder: 待指定修复类 skill
