@@ -784,6 +784,7 @@ pub fn apply_plan(ctx: &AppContext, plan_id: String) -> Result<ApplyResult, Stri
                 let target = required_path(operation.target_path.as_deref(), operation)?;
                 create_symlink(&source, &target)
             }
+            "download-to-library" => apply_download_to_library(ctx, operation),
             _ => Ok(()),
         };
 
@@ -1195,6 +1196,7 @@ fn operation(
         message: message.to_string(),
         agent_id: agent_id.map(|agent_id| agent_id.to_string()),
         skill_id: skill_id.map(|skill_id| skill_id.to_string()),
+        skill_path: None,
     }
 }
 
@@ -1279,6 +1281,126 @@ fn write_history(
             path_to_string(&path)
         )
     })
+}
+
+// ==== workflow-use 支撑（全部为新增，不改既有分支逻辑）====================
+
+/// download-to-library 执行分支：克隆解析来源仓库 → 复制到中心库
+/// `library_path/<slug>/`；目标已含 SKILL.md 时跳过（前序 op 或人工已补齐）。
+/// op 的来源 URL 由 `Workflow::validate` 在 save/load 时把关（GitHub-only），
+/// 执行器本身逐字使用 clone URL，以便单元测试以本地 fixture 仓库为来源。
+fn apply_download_to_library(ctx: &AppContext, operation: &SyncOperation) -> Result<(), String> {
+    let target = required_path(operation.target_path.as_deref(), operation)?;
+    let slug = operation
+        .skill_id
+        .as_deref()
+        .ok_or_else(|| format!("操作 {} 缺少 skillId", operation.id))?;
+    let source_url = operation
+        .source_path
+        .as_deref()
+        .ok_or_else(|| format!("操作 {} 缺少下载来源 URL", operation.id))?;
+
+    if target.join("SKILL.md").exists() {
+        return Ok(());
+    }
+    let remote =
+        crate::skill_ops::checkout_skill_from_clone_source(ctx, slug, source_url, operation.skill_path.as_deref())?;
+    copy_dir_recursive(&remote, &target)
+}
+
+/// 供 workflow_use 把组装好的 plan 落盘（复用 plans/ 存储，apply_plan 可加载）。
+pub(crate) fn save_plan_for_workflow(ctx: &AppContext, plan: &SyncPlan) -> Result<(), String> {
+    save_plan(ctx, plan)
+}
+
+/// 供 workflow_use 解析 output ops 的写入位置：与同步 ops 同一套 target 解析
+/// （默认目标、agent 过滤、global/project root），并按 (agentId, root) 去重。
+/// 只返回已安装 agent 的 root；未知/未安装 agent 由同步 ops 的 blocked 语义表达。
+pub(crate) fn resolve_skill_roots_for_targets(
+    settings: &crate::models::Settings,
+    targets: &[AgentTarget],
+) -> Vec<(String, PathBuf)> {
+    let installed_agent_ids = detect_agents(settings, false)
+        .into_iter()
+        .filter(|agent| agent.installed)
+        .map(|agent| agent.id)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let targets = if targets.is_empty() {
+        default_targets(settings)
+    } else {
+        targets.to_vec()
+    };
+
+    let mut roots = Vec::new();
+    for target in &targets {
+        let Some(agent) = find_agent(&target.agent_id) else {
+            continue;
+        };
+        if !installed_agent_ids.contains(&agent.id) {
+            continue;
+        }
+        for (_scope, root_path) in target_roots_for_agent(&agent, target, settings) {
+            roots.push((agent.id.clone(), root_path));
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// 供 workflow_use 追加「中心库 skill → targets」的标准同步 ops：按 method 分发到
+/// 既有的 symlink 同步（append_sync_operations）与 copy 迁移
+/// （append_quick_migration_operations）两条既有路径，行为与批量同步/迁移一致。
+/// `source_hash` 为 None 表示该 skill 尚未在中心库（将由 download-to-library
+/// 先行补齐）：目标不存在时按创建规划；目标已存在时因无法比对内容，既有逻辑
+/// 保守判为 content-conflict blocked。
+pub(crate) fn append_library_sync_for_workflow(
+    settings: &crate::models::Settings,
+    plan_id: &str,
+    slug: &str,
+    source_hash: Option<&str>,
+    targets: &[AgentTarget],
+    method: &str,
+    operations: &mut Vec<SyncOperation>,
+    blocked_conflicts: &mut Vec<String>,
+    preconditions: &mut Vec<String>,
+) {
+    let library_path = PathBuf::from(&settings.library_path);
+    let source_path = library_path.join(slug);
+    let backup_home = library_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| library_path.clone());
+    let backup_root = backup_home.join("backups").join(plan_id);
+
+    if method == "copy" {
+        append_quick_migration_operations(
+            settings,
+            slug,
+            &source_path,
+            source_hash,
+            targets.to_vec(),
+            method,
+            &backup_root,
+            operations,
+            blocked_conflicts,
+            preconditions,
+        );
+    } else {
+        append_sync_operations(
+            settings,
+            slug,
+            &source_path,
+            source_hash,
+            targets.to_vec(),
+            &[],
+            &backup_root,
+            operations,
+            blocked_conflicts,
+            preconditions,
+        );
+    }
 }
 
 #[cfg(test)]

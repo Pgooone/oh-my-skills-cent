@@ -264,6 +264,10 @@ pub struct SyncOperation {
     pub message: String,
     pub agent_id: Option<String>,
     pub skill_id: Option<String>,
+    /// download-to-library 专用：来源仓库内的 skill 目录路径（对应 skill.lock 的
+    /// skillPath 字段）。serde default 保证既有 plan json 向后兼容。
+    #[serde(default)]
+    pub skill_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

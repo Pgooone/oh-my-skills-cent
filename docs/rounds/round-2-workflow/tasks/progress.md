@@ -11,7 +11,7 @@
 - [x] registry-client（verifier 通过；Settings 向后兼容实证、原子换缓存、9 个零外网测试）
 
 ## 批次 3
-- [ ] workflow-use
+- [x] workflow-use（verifier pass（自建探针 8 case 全过）；lead 裁决 ⑦ 打包形态跳过独立同步 ops，agent team 返工闭环后 78/103 双绿）
 
 ## 批次 4 · 并行
 - [ ] workflows-api

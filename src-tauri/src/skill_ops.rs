@@ -199,6 +199,19 @@ fn checkout_skills_sh_source(
     skill_path: Option<&str>,
 ) -> Result<PathBuf, String> {
     let clone_url = normalize_github_url(source_url)?;
+    checkout_skill_from_clone_source(ctx, slug, &clone_url, skill_path)
+}
+
+/// Clone URL 逐字使用（不经 GitHub-only 归一化）的下载执行器。调用方必须自己
+/// 保证来源可信：workflow-use 的 download-to-library 分支经 `Workflow::validate`
+/// 把关后调用本函数；单元测试用它把本地 fixture git 仓库当下载来源（与
+/// workflow_registry 的 `*_from_source` 测试钩子同一模式）。
+pub(crate) fn checkout_skill_from_clone_source(
+    ctx: &AppContext,
+    slug: &str,
+    clone_url: &str,
+    skill_path: Option<&str>,
+) -> Result<PathBuf, String> {
     let checkout_root = crate::settings::app_data_dir(ctx)?
         .join("updates")
         .join(format!("{}-{}", slug, Utc::now().timestamp_millis()));
@@ -206,7 +219,7 @@ fn checkout_skills_sh_source(
     fs_ops::ensure_dir(&checkout_root)?;
 
     let status = Command::new("git")
-        .args(["clone", "--depth", "1", &clone_url])
+        .args(["clone", "--depth", "1", clone_url])
         .arg(&repo_path)
         .status()
         .map_err(|error| format!("Unable to clone {clone_url}: {error}"))?;

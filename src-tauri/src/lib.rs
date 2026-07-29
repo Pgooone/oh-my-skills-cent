@@ -10,6 +10,7 @@ pub mod skill_ops;
 pub mod sync_plan;
 pub mod workflow;
 pub mod workflow_registry;
+pub mod workflow_use;
 #[cfg(feature = "web")]
 pub mod web;
 

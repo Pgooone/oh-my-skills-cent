@@ -1009,6 +1009,7 @@ mod tests {
                     message: "Link blog-translator into AMP".to_string(),
                     agent_id: Some("amp".to_string()),
                     skill_id: Some("blog-translator".to_string()),
+                    skill_path: None,
                 },
                 SyncOperation {
                     id: "preview-only-op".to_string(),
@@ -1022,6 +1023,7 @@ mod tests {
                     message: "Preview-only operation".to_string(),
                     agent_id: Some("amp".to_string()),
                     skill_id: Some("blog-translator".to_string()),
+                    skill_path: None,
                 },
                 SyncOperation {
                     id: "library-import-op".to_string(),
@@ -1035,6 +1037,7 @@ mod tests {
                     message: "Import agent-development into the central library".to_string(),
                     agent_id: None,
                     skill_id: Some("agent-development".to_string()),
+                    skill_path: None,
                 },
                 SyncOperation {
                     id: "unattributed-op".to_string(),
@@ -1048,6 +1051,7 @@ mod tests {
                     message: "Operation without agent id".to_string(),
                     agent_id: None,
                     skill_id: Some("blog-translator".to_string()),
+                    skill_path: None,
                 },
             ],
             preconditions: Vec::new(),
@@ -1112,6 +1116,7 @@ mod tests {
                 message: "Link ask-matt into Cline global skills".to_string(),
                 agent_id: Some("cline".to_string()),
                 skill_id: Some("ask-matt".to_string()),
+                skill_path: None,
             }],
             preconditions: Vec::new(),
             blocked_conflicts: Vec::new(),
