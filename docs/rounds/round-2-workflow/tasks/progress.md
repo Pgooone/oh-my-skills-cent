@@ -4,11 +4,11 @@
 > 本轮队员参数：**model = sonnet，effort = max**。
 
 ## 批次 1 · 承重墙 spike
-- [ ] download-spike（证伪下载解析/yaml 解析/注册表链路三条前提）
+- [x] download-spike（三条前提全 PASS：skillPath 目录形式唯一正确、serde_yml 解析正确、注册表链路通畅；内建候选不命中 mattpocock 结构 → skillPath 实为必填）
 
 ## 批次 2 · 并行
-- [ ] workflow-core
-- [ ] registry-client
+- [x] workflow-core（verifier 通过；25 行 URL 镜像重复经 verifier 抓出、lead 收敛复用）
+- [x] registry-client（verifier 通过；Settings 向后兼容实证、原子换缓存、9 个零外网测试）
 
 ## 批次 3
 - [ ] workflow-use

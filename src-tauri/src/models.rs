@@ -10,6 +10,8 @@ pub struct Settings {
     pub show_raw_paths: bool,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
+    pub workflow_registry_url: Option<String>,
 }
 
 pub fn default_language() -> String {

@@ -218,6 +218,7 @@ mod tests {
             }],
             show_raw_paths: false,
             language: "zh-CN".to_string(),
+            workflow_registry_url: None,
         };
         (temp, ctx, settings)
     }

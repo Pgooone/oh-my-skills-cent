@@ -4,6 +4,9 @@ use crate::models::{CustomRoot, Settings};
 use std::fs;
 use std::path::PathBuf;
 
+pub const OFFICIAL_WORKFLOW_REGISTRY_URL: &str =
+    "https://github.com/Pgooone/oh-my-skills-workflows.git";
+
 pub fn app_data_dir(ctx: &AppContext) -> Result<PathBuf, String> {
     Ok(ctx.data_dir().to_path_buf())
 }
@@ -20,6 +23,7 @@ pub fn default_settings(ctx: &AppContext) -> Result<Settings, String> {
         custom_roots: Vec::<CustomRoot>::new(),
         show_raw_paths: false,
         language: "zh-CN".to_string(),
+        workflow_registry_url: Some(OFFICIAL_WORKFLOW_REGISTRY_URL.to_string()),
     })
 }
 
@@ -50,6 +54,15 @@ pub fn load_settings(ctx: &AppContext) -> Result<Settings, String> {
     }
     if settings.language.trim().is_empty() {
         settings.language = default.language;
+    }
+    if settings
+        .workflow_registry_url
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        settings.workflow_registry_url = default.workflow_registry_url;
     }
 
     Ok(settings)

@@ -1436,6 +1436,7 @@ enabled = true
             custom_roots: Vec::new(),
             show_raw_paths: false,
             language: "zh-CN".to_string(),
+            workflow_registry_url: None,
         };
         let candidates =
             discover_project_workspaces(&path_to_string(temp.path()), &settings).expect("discover");

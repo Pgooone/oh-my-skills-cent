@@ -231,7 +231,7 @@ fn checkout_skills_sh_source(
     Ok(source)
 }
 
-fn normalize_github_url(source_url: &str) -> Result<String, String> {
+pub(crate) fn normalize_github_url(source_url: &str) -> Result<String, String> {
     let trimmed = source_url
         .trim()
         .trim_end_matches('/')
