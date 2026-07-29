@@ -21,4 +21,4 @@
 - [x] 单二进制独立可用（release 内嵌负向验证：dist 改名后仍逐字节服务页面）
 - [x] 三类门禁全绿：cargo test（64 web + 39 默认）/ tsc / vite build
 - [x] 安全负向：假 Host / 跨源 POST / cross-site 全 403，同源 200（lead curl 实测）；浏览器全程零 pageError
-- [ ] Linux（WSL2 或服务器）启动 + SSH 隧道访问验证 —— 本机无 WSL2，推迟到有 Linux 环境时执行（deployment.md 已含完整步骤）
+- [x] Linux（WSL2 Ubuntu）实机验证通过：二进制 `ldd` 仅 libc/libm/libgcc（**零 webkit/gtk**）；启动后 health 200、假 Host/跨源全 403；假 `claude` CLI 触发 agent 检测、扫描发现测试 skill；Windows 侧 localhost 转发访问通（≈SSH 隧道路径）；测试残留已清理
