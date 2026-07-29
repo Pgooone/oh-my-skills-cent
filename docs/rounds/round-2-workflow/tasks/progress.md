@@ -18,8 +18,11 @@
 - [x] workflows-ui（verifier pass；真浏览器注册表下载→详情→占位 banner 全流程、pageErrors=0；两处 lead 裁决落地：WorkflowDetail 形状、refresh cache-first）
 
 ## 最终验收（proposal §6，判据纪律见 docs/acceptance-standards.md）
-- [ ] 真浏览器全流程：浏览注册表 → 下载软件开发工作流 → 详情（分组/步骤/缺失标记）→ 使用（Sync Plan 预览含下载 → 执行）→ 入口清单落目标目录
-- [ ] 打包 skill 形态生成 + 真实 Claude Code 会话验证可消费
-- [ ] 占位步骤醒目标记 + 使用时提示
-- [ ] 本地创建/编排（一步多 skill + 占位）→ 保存 → 可使用
-- [ ] 三类门禁全绿：cargo test（默认 + web）/ tsc / vite build
+- [x] AC1 真浏览器全流程：注册表下载 → 详情（3 分组/3 步骤全「将下载」）→ 预览含 3 条下载 ops → 执行 → 中心库 3 skill、目标目录 3 skill + `_workflow-software-development/`（README 步骤有序，D5）
+- [x] AC2 打包形态：`software-development/` = SKILL.md（编排正文）+ skills/ 结构化拷贝（递归 diff ×3 逐字节一致）；**真实 agent 消费验证通过**（模拟 agent 读入口 → 按指引读到全部子 skill → 无死链 → 方法理解准确）；打包形态预览无同步方式区（⑦ 裁决实证）
+- [x] AC3 占位步骤：列表行与详情「占位」徽标 + 预览 banner「含占位 skill（已跳过）」
+- [x] AC4 本地创建：一步双 skill（有序）+ 占位 → 保存 → 已安装 → 详情正确；yaml 落盘保序
+- [x] AC5 三门禁全绿：cargo test 默认 79 / web 109、tsc、vite build（lead 复跑）
+- [x] AC6 pageErrors=0（全程 console 核查）
+- [x] 卫生：测试写入全部还原（目标目录/中心库恢复空态、临时目录删除、服务按任务停止、8477 释放）
+- [x] 彩蛋（活体证据）：两次执行后本会话即时发现新装 skill（domain-modeling/tdd 与打包 software-development）——agent 自动发现在真实 agent 身上发生
