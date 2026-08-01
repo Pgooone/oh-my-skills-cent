@@ -2,6 +2,8 @@
 mod commands;
 pub mod context;
 pub mod fs_ops;
+pub mod git_ops;
+pub mod github_auth;
 pub mod models;
 pub mod registry;
 pub mod scanner;

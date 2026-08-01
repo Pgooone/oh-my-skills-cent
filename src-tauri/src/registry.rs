@@ -1437,6 +1437,10 @@ enabled = true
             show_raw_paths: false,
             language: "zh-CN".to_string(),
             workflow_registry_url: None,
+            github_token: None,
+            github_username: None,
+            skill_registry_url: None,
+            clear_github_token: false,
         };
         let candidates =
             discover_project_workspaces(&path_to_string(temp.path()), &settings).expect("discover");

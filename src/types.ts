@@ -5,6 +5,14 @@ export type Settings = {
   showRawPaths: boolean;
   language: string;
   workflowRegistryUrl?: string;
+  skillRegistryUrl?: string;
+  githubUsername?: string;
+  /** 仅 save 入参方向：用户新输入的 token。返回体永不携带该键（裁剪为 hasGithubToken）。 */
+  githubToken?: string;
+  /** 仅 save 入参方向：true = 显式清除已存 token（优先级高于 githubToken 替换）。 */
+  clearGithubToken?: boolean;
+  /** 仅返回方向：当前是否已配置 token。 */
+  hasGithubToken?: boolean;
 };
 
 export type CustomRoot = {

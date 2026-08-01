@@ -12,6 +12,29 @@ pub struct Settings {
     pub language: String,
     #[serde(default)]
     pub workflow_registry_url: Option<String>,
+    /// GitHub token 明文落盘（Q4 拍板）；None 时键不写出。凡出参一律裁剪
+    /// （settings::redacted），该键只出现在磁盘与入参方向。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_token: Option<String>,
+    #[serde(default)]
+    pub github_username: Option<String>,
+    #[serde(default)]
+    pub skill_registry_url: Option<String>,
+    /// wire 专用标记（门-token-F3）：入参 true = 显式清除已存 token，优先级
+    /// 高于 github_token 替换。永不序列化（不落盘、不出参）。
+    #[serde(default, skip_serializing)]
+    pub clear_github_token: bool,
+}
+
+/// 出参裁剪形态（门-token-F1）：凡返回 Settings 的 API 一律用它——克隆后置
+/// 空 github_token（None + skip_serializing_if → 键消失），附加 hasGithubToken
+/// 告知前端是否已配置。只序列化，不反序列化。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactedSettings {
+    #[serde(flatten)]
+    pub settings: Settings,
+    pub has_github_token: bool,
 }
 
 pub fn default_language() -> String {

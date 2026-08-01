@@ -23,6 +23,7 @@ web = ["dep:axum", "dep:tower-http", "dep:rust-embed", "dep:tokio"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 rust-embed = { version = "8", features = ["debug-embed", "mime-guess"], optional = true }
 serde = { version = "1", features = ["derive"] }

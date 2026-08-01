@@ -426,6 +426,129 @@ mod tests {
         assert_eq!(saved.library_path, new_library);
     }
 
+    // -- settings 出参裁剪（门-token-F1/R3）------------------------------------
+
+    #[tokio::test]
+    async fn settings_responses_never_expose_github_token() {
+        let (temp, state) = test_state();
+        let app = build_router(state);
+        let library = crate::fs_ops::path_to_string(&temp.path().join("home").join("library"));
+
+        // 保存带 token 的设置 → save_settings 响应：无 githubToken 键 + hasGithubToken=true。
+        let body = serde_json::json!({
+            "settings": {
+                "libraryPath": library,
+                "projectFolders": [],
+                "customRoots": [],
+                "showRawPaths": false,
+                "language": "zh-CN",
+                "githubToken": "ghp_web_secret"
+            }
+        })
+        .to_string();
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/save_settings", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("saved json");
+        assert!(
+            saved.as_object().expect("object").get("githubToken").is_none(),
+            "save 响应不得含 githubToken 键: {saved}"
+        );
+        assert_eq!(saved["hasGithubToken"].as_bool(), Some(true));
+
+        // get_settings 响应同规则。
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/get_settings", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let fetched: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("get json");
+        assert!(
+            fetched.as_object().expect("object").get("githubToken").is_none(),
+            "get 响应不得含 githubToken 键: {fetched}"
+        );
+        assert_eq!(fetched["hasGithubToken"].as_bool(), Some(true));
+
+        // 改无关设置（回传裁剪体，无 token）→ token 不动。
+        let mut echo = fetched.clone();
+        echo["language"] = serde_json::Value::from("en");
+        let body = serde_json::json!({ "settings": echo }).to_string();
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/save_settings", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("saved json");
+        assert_eq!(
+            saved["hasGithubToken"].as_bool(),
+            Some(true),
+            "改无关设置 token 不动"
+        );
+        let disk =
+            std::fs::read_to_string(temp.path().join("data").join("settings.json")).expect("disk");
+        assert!(disk.contains("ghp_web_secret"), "token 正常落盘（R3）");
+
+        // 显式清除 → hasGithubToken=false，落盘无 token。
+        let mut clearing = saved.clone();
+        clearing["clearGithubToken"] = serde_json::Value::from(true);
+        let body = serde_json::json!({ "settings": clearing }).to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/save_settings", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let cleared: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("cleared json");
+        assert_eq!(cleared["hasGithubToken"].as_bool(), Some(false));
+        let disk =
+            std::fs::read_to_string(temp.path().join("data").join("settings.json")).expect("disk");
+        assert!(!disk.contains("ghp_web_secret"), "显式清除后落盘无 token");
+    }
+
+    #[tokio::test]
+    async fn save_settings_rejects_userinfo_and_non_github_registry_urls() {
+        let (temp, state) = test_state();
+        let app = build_router(state);
+        let library = crate::fs_ops::path_to_string(&temp.path().join("home").join("library"));
+
+        for (field, value) in [
+            ("workflowRegistryUrl", "https://user:pw@github.com/owner/repo.git"),
+            ("skillRegistryUrl", "https://user:pw@github.com/owner/repo.git"),
+            ("workflowRegistryUrl", "https://gitlab.com/owner/repo.git"),
+            ("skillRegistryUrl", "https://gitlab.com/owner/repo.git"),
+        ] {
+            let body = serde_json::json!({
+                "settings": {
+                    "libraryPath": library,
+                    "projectFolders": [],
+                    "customRoots": [],
+                    "showRawPaths": false,
+                    "language": "zh-CN",
+                    field: value
+                }
+            })
+            .to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/save_settings", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{field}={value}"
+            );
+        }
+    }
+
     // -- list_dir（dir-browser）------------------------------------------------
 
     #[tokio::test]

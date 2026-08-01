@@ -74,10 +74,13 @@ pub async fn health() -> Json<HealthResponse> {
 
 // ---------------------------------------------------------------------------
 // get_settings / save_settings / scan_inventory / read_inventory_cache
+//
+// 出参裁剪（门-token-F1）：两个 settings endpoint 的响应一律经
+// settings::redacted——githubToken 键不出现，hasGithubToken 告知是否已配置。
 // ---------------------------------------------------------------------------
 
 pub async fn get_settings(State(state): State<Arc<AppState>>) -> Response {
-    respond(settings::load_settings(state.ctx()))
+    respond(settings::load_settings(state.ctx()).map(|loaded| settings::redacted(&loaded)))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -94,16 +97,15 @@ pub async fn save_settings(
     if let Err(error) = state.check_browse_path(&request.settings.library_path) {
         return rejected(error);
     }
-    if let Err(error) = settings::save_settings(state.ctx(), &request.settings) {
-        return business_error(error);
-    }
-    match settings::load_settings(state.ctx()) {
-        Ok(loaded) => {
+    // 入参校验（两个 *RegistryUrl 拒绝 userinfo/非 GitHub）与 token 三分支合并
+    // 单点在核心 save_settings_with_merge。
+    match settings::save_settings_with_merge(state.ctx(), &request.settings) {
+        Ok(saved) => {
             // 允许根集随 settings 变化刷新。
-            if let Err(error) = state.refresh_jail(&loaded) {
+            if let Err(error) = state.refresh_jail(&saved) {
                 return business_error(error);
             }
-            Json(loaded).into_response()
+            Json(settings::redacted(&saved)).into_response()
         }
         Err(error) => business_error(error),
     }

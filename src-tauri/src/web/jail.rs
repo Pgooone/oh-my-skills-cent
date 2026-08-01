@@ -219,6 +219,10 @@ mod tests {
             show_raw_paths: false,
             language: "zh-CN".to_string(),
             workflow_registry_url: None,
+            github_token: None,
+            github_username: None,
+            skill_registry_url: None,
+            clear_github_token: false,
         };
         (temp, ctx, settings)
     }

@@ -1,23 +1,29 @@
 use crate::models::{
     AgentTarget, ApplyResult, InstallationRef, InventorySnapshot, ProjectWorkspaceCandidate,
-    ScanOptions, Settings, SkillContent, SkillLockEntry, SkillRef, SkillUpdateCheck, SyncPlan,
-    SyncReplacement,
+    RedactedSettings, ScanOptions, Settings, SkillContent, SkillLockEntry, SkillRef,
+    SkillUpdateCheck, SyncPlan, SyncReplacement,
 };
 use crate::{app_context, fs_ops, registry, scanner, settings, skill_ops, sync_plan};
 use std::collections::BTreeMap;
 use tauri::AppHandle;
 
+// 出参裁剪（门-token-F1）：凡返回 Settings 的 command 一律经 settings::redacted，
+// githubToken 键不出现在响应里，前端凭 hasGithubToken 判断是否已配置。
+
 #[tauri::command]
-pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
+pub fn get_settings(app: AppHandle) -> Result<RedactedSettings, String> {
     let ctx = app_context(&app)?;
-    settings::load_settings(&ctx)
+    let loaded = settings::load_settings(&ctx)?;
+    Ok(settings::redacted(&loaded))
 }
 
 #[tauri::command]
-pub fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
+pub fn save_settings(app: AppHandle, settings: Settings) -> Result<RedactedSettings, String> {
     let ctx = app_context(&app)?;
-    settings::save_settings(&ctx, &settings)?;
-    settings::load_settings(&ctx)
+    // 入参校验（两个 *RegistryUrl 拒绝 userinfo/非 GitHub）与 token 三分支合并
+    // 单点在核心 save_settings_with_merge。
+    let saved = settings::save_settings_with_merge(&ctx, &settings)?;
+    Ok(settings::redacted(&saved))
 }
 
 #[tauri::command]

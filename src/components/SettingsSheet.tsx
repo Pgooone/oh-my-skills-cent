@@ -5,6 +5,26 @@ import { pickDirectory } from "../lib/shell";
 import { agentSignalSummary, compactPath } from "../lib/skillUtils";
 import type { AgentRecord, InventorySnapshot, Settings as AppSettings, SkillRecord } from "../types";
 
+/** 注册表 URL 校验（评审门 F3）：留空合法（官方缺省）；非空必须是 GitHub 仓库
+ * 地址（owner/repo），userinfo 与非 GitHub 来源一并拒绝。与后端
+ * normalize_github_url 同规则的前置拦截。 */
+function registryUrlError(value: string | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return null;
+  const stripped = trimmed.replace(/\/+$/, "").replace(/\.git$/, "");
+  const prefix = ["https://github.com/", "git@github.com:", "github.com/"].find((item) =>
+    stripped.startsWith(item)
+  );
+  const path = prefix ? stripped.slice(prefix.length) : stripped;
+  if (path.includes("@") || (!prefix && stripped.includes("://"))) {
+    return "注册表 URL 仅支持 GitHub 仓库，且不允许携带账号信息";
+  }
+  const parts = path.split("/").filter(Boolean);
+  return parts.length === 2 ? null : "注册表 URL 需为 GitHub 仓库地址（owner/repo）";
+}
+
+const urlErrorStyle = { color: "#b42318", fontSize: 12 } as const;
+
 export function SettingsSheet({
   settings,
   inventory,
@@ -24,6 +44,9 @@ export function SettingsSheet({
   const [settingsTab, setSettingsTab] = useState<"data" | "agents">("data");
   const appDataPath = inventory?.appDataPath || "";
   const customRoots = settings.customRoots ?? [];
+  const workflowRegistryUrlError = registryUrlError(settings.workflowRegistryUrl);
+  const skillRegistryUrlError = registryUrlError(settings.skillRegistryUrl);
+  const hasRegistryUrlError = Boolean(workflowRegistryUrlError || skillRegistryUrlError);
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
@@ -129,7 +152,71 @@ export function SettingsSheet({
                   onChange={(event) => onChange({ ...settings, workflowRegistryUrl: event.target.value })}
                   placeholder="https://github.com/Pgooone/oh-my-skills-workflows.git"
                   spellCheck={false}
+                  aria-invalid={Boolean(workflowRegistryUrlError)}
                 />
+                {workflowRegistryUrlError && <span style={urlErrorStyle}>{workflowRegistryUrlError}</span>}
+              </div>
+
+              <div className="settings-row settings-row-stack" role="listitem">
+                <div className="settings-row-copy">
+                  <strong>Skill 注册表 URL</strong>
+                  <span>远程 Skill 列表来源的 Git 仓库地址；留空使用官方注册表，修改后下次刷新远程列表生效。</span>
+                </div>
+                <input
+                  className="settings-path-input"
+                  value={settings.skillRegistryUrl ?? ""}
+                  onChange={(event) => onChange({ ...settings, skillRegistryUrl: event.target.value })}
+                  placeholder="https://github.com/Pgooone/oh-my-skills-skills.git"
+                  spellCheck={false}
+                  aria-invalid={Boolean(skillRegistryUrlError)}
+                />
+                {skillRegistryUrlError && <span style={urlErrorStyle}>{skillRegistryUrlError}</span>}
+              </div>
+
+              <div className="settings-row settings-row-stack" role="listitem">
+                <div className="settings-row-copy">
+                  <strong>GitHub 用户名</strong>
+                  <span>一键贡献时定位你的 fork 仓库（github.com/&lt;用户名&gt;/…）。</span>
+                </div>
+                <input
+                  className="settings-path-input"
+                  value={settings.githubUsername ?? ""}
+                  onChange={(event) => onChange({ ...settings, githubUsername: event.target.value })}
+                  spellCheck={false}
+                />
+              </div>
+
+              <div className="settings-row settings-row-stack" role="listitem">
+                <div className="settings-row-copy">
+                  <strong>GitHub Token</strong>
+                  <span>
+                    推送注册表与一键贡献时使用；以明文存储于本机 settings.json（与 gh CLI 同级），环境变量
+                    OMS_GITHUB_TOKEN 优先。
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    className="settings-path-input"
+                    type="password"
+                    value={settings.githubToken ?? ""}
+                    onChange={(event) =>
+                      onChange({ ...settings, githubToken: event.target.value, clearGithubToken: false })
+                    }
+                    placeholder={settings.hasGithubToken ? "已配置（为安全起见不显示），输入以替换" : "未配置"}
+                    spellCheck={false}
+                    autoComplete="new-password"
+                  />
+                  {settings.hasGithubToken && !settings.clearGithubToken && (
+                    <button
+                      className="secondary-button"
+                      onClick={() => onChange({ ...settings, githubToken: undefined, clearGithubToken: true })}
+                      type="button"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+                {settings.clearGithubToken && <span style={urlErrorStyle}>保存后将清除已配置的 token。</span>}
               </div>
 
               <div className="settings-row" role="listitem">
@@ -245,7 +332,13 @@ export function SettingsSheet({
 
         <footer className="sheet-actions">
           <button className="secondary-button" onClick={onClose} type="button">取消</button>
-          <button className="primary-button" onClick={onSave} type="button">
+          <button
+            className="primary-button"
+            onClick={onSave}
+            type="button"
+            disabled={hasRegistryUrlError}
+            title={hasRegistryUrlError ? "请先修正注册表 URL" : undefined}
+          >
             <Check size={16} />
             保存
           </button>
