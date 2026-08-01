@@ -9,7 +9,6 @@ use chrono::Utc;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub fn read_skill_lock() -> Result<BTreeMap<String, SkillLockEntry>, String> {
     let path = fs_ops::expand_home("~/.agents/.skill-lock.json");
@@ -218,16 +217,9 @@ pub(crate) fn checkout_skill_from_clone_source(
     let repo_path = checkout_root.join("repo");
     fs_ops::ensure_dir(&checkout_root)?;
 
-    let status = Command::new("git")
-        .args(["clone", "--depth", "1", clone_url])
-        .arg(&repo_path)
-        .status()
+    let token = crate::github_auth::resolve_token(ctx);
+    crate::git_ops::clone_repo_verbatim(clone_url, &repo_path, token.as_deref())
         .map_err(|error| format!("Unable to clone {clone_url}: {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "Unable to clone {clone_url}: git exited with {status}"
-        ));
-    }
 
     let source = resolve_skill_path(&repo_path, slug, skill_path).ok_or_else(|| {
         format!(

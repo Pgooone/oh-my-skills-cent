@@ -69,6 +69,17 @@ pub fn clone_repo(url: &str, dest: &Path, token: Option<&str>) -> Result<(), Str
     run(&mut cmd, token).map(|_| ())
 }
 
+/// `git clone --depth 1`，URL 逐字使用（不过 GitHub-only 归一化）。
+/// 逐字来源执行器——单元测试用本地 fixture git 仓库当来源；生产路径的
+/// GitHub-only / userinfo 把关在上游边界（settings 保存校验 /
+/// `Workflow::validate` / 公开 API normalize）。
+pub fn clone_repo_verbatim(url: &str, dest: &Path, token: Option<&str>) -> Result<(), String> {
+    let mut cmd = base_command();
+    with_auth(&mut cmd, token);
+    cmd.arg("clone").arg("--depth").arg("1").arg(url).arg(dest);
+    run(&mut cmd, token).map(|_| ())
+}
+
 /// `git ls-remote <url>`：探测远端可达性与 refs（贡献流程探测 fork 用）。
 pub fn ls_remote(url: &str, token: Option<&str>) -> Result<String, String> {
     let url = normalize_github_url(url)?;
@@ -242,6 +253,43 @@ mod tests {
             assert!(push(temp.path(), bad, "HEAD", None).is_err(), "push {bad}");
         }
         assert!(!dest.exists(), "拒绝前不得产生任何 git 调用产物");
+    }
+
+    /// 逐字变体正例：本地 fixture 仓库（非 GitHub URL）不过归一化也能 clone——
+    /// 这正是 workflow_registry / skill_ops 测试钩子依赖的契约（门-F-18）。
+    #[test]
+    fn clone_repo_verbatim_clones_local_fixture_repo() {
+        let temp = tempfile::tempdir().expect("temp");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+
+        let mut init = base_command();
+        init.arg("-C").arg(&repo).arg("init");
+        run(&mut init, None).expect("git init");
+        std::fs::write(repo.join("README.md"), "fixture").expect("fixture file");
+        let mut add = base_command();
+        add.arg("-C").arg(&repo).arg("add").arg("-A");
+        run(&mut add, None).expect("git add");
+        let id = GitIdentity {
+            name: "Test Bot".to_string(),
+            email: "bot@example.com".to_string(),
+        };
+        let mut commit = base_command();
+        with_identity(&mut commit, &id);
+        commit
+            .arg("-C")
+            .arg(&repo)
+            .arg("-c")
+            .arg("commit.gpgsign=false")
+            .arg("commit")
+            .arg("-m")
+            .arg("fixture");
+        run(&mut commit, None).expect("git commit");
+
+        let source = repo.to_string_lossy().into_owned();
+        let dest = temp.path().join("dest");
+        clone_repo_verbatim(&source, &dest, None).expect("verbatim clone");
+        assert!(dest.join("README.md").is_file());
     }
 
     #[test]

@@ -13,12 +13,12 @@
 
 ## 批次 1 · 地基 + 承重 spike
 
-- [ ] C1 git-foundation（M1 git-ops + M2 github-auth + settings 扩展）
+- [x] C1 git-foundation（M1 git-ops + M2 github-auth + settings 扩展）（60190b4；cargo 默认 104/web 136/tsc/build 全绿；一处偏差返工闭环：fallback email → noreply 形态）
 - [ ] C0 W1 token spike（lead 亲跑 shell 探针；token 到手即做，**C5 开工前必须 GO**）
 
 ## 批次 2 · 下沉
 
-- [ ] C2 git-ops-adoption（两处既有 clone → M1）
+- [x] C2 git-ops-adoption（两处既有 clone → M1 clone_repo_verbatim）（开工阻断→lead 裁决方案 2' 扩围；cargo 默认 105/web 137 全绿、零测试修改；Command::new 生产仅剩 git_ops.rs）
 
 ## 批次 3 · 功能核心（串行，共享 commands/routes/mod 锁序）
 

@@ -14,6 +14,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+// 仅测试模块（use super::* 的 git helper）使用；生产代码已收敛至 git_ops。
+#[cfg(test)]
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -133,20 +135,14 @@ fn refresh_cache(ctx: &AppContext, source: &str) -> Result<(), String> {
         let _ = fs::remove_dir_all(&staging);
     }
 
-    let status = Command::new("git")
-        .args(["clone", "--depth", "1", source])
-        .arg(&staging)
-        .status()
-        .map_err(|error| format!("Unable to clone {source}: {error}"))?;
-    if !status.success() {
+    let token = crate::github_auth::resolve_token(ctx);
+    if let Err(error) = crate::git_ops::clone_repo_verbatim(source, &staging, token.as_deref()) {
         let _ = fs::remove_dir_all(&staging);
         if current.is_dir() {
             // Pull failed: keep the previous cache and continue with it.
             return Ok(());
         }
-        return Err(format!(
-            "Unable to clone {source}: git exited with {status}"
-        ));
+        return Err(format!("Unable to clone {source}: {error}"));
     }
 
     swap_current(&root, &staging, &current, stamp)
