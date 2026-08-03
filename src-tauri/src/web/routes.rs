@@ -1,6 +1,6 @@
 //! 12 个既有 command 的 HTTP endpoint（薄转发，NFR-2）+ 新增 `list_dir`
 //! （dir-browser，D3 目录选择替代）+ Round 2 workflows 组（7 个薄转发，
-//! 见文件末尾 section）+ `GET /api/health`。
+//! 见文件末尾 section）+ Round 3 workflow-update 组（2 个薄转发）+ `GET /api/health`。
 //!
 //! 契约（设计 §2.3）：
 //! - `POST /api/commands/{command_name}`，请求 JSON = 参数 map（camelCase，同 tauri invoke）
@@ -21,7 +21,7 @@ use crate::models::{
 };
 use crate::workflow::Workflow;
 use crate::workflow_use::OutputForm;
-use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_use};
+use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_update, workflow_use};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -462,6 +462,10 @@ pub async fn download_workflow(
         Ok(slug) => slug,
         Err(error) => return business_error(error),
     };
+    // M3：下载成功记录来源快照（薄转发 +1 行），供三态更新检查比对。
+    if let Err(error) = workflow_update::record_source(state.ctx(), &slug, &registry_url, &request.path) {
+        return business_error(error);
+    }
     let installed = match workflow::list_installed(state.ctx()) {
         Ok(installed) => installed,
         Err(error) => return business_error(error),
@@ -522,6 +526,33 @@ pub async fn preview_use_workflow(
         request.targets,
         request.method,
         request.output_form,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 workflow-update（M3）：2 个薄转发。无文件路径参数（slug 由核心
+// 校验 [a-z0-9-]+，失败即业务错误 422），jail 不涉及。
+// ---------------------------------------------------------------------------
+
+pub async fn check_workflow_updates(State(state): State<Arc<AppState>>) -> Response {
+    respond(workflow_update::check_all(state.ctx()))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkflowRequest {
+    pub slug: String,
+    pub confirm_modified: bool,
+}
+
+pub async fn update_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<UpdateWorkflowRequest>,
+) -> Response {
+    respond(workflow_update::apply_update(
+        state.ctx(),
+        &request.slug,
+        request.confirm_modified,
     ))
 }
 

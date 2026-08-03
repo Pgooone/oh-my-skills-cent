@@ -129,6 +129,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/commands/preview_use_workflow",
             post(routes::preview_use_workflow),
         )
+        .route(
+            "/api/commands/check_workflow_updates",
+            post(routes::check_workflow_updates),
+        )
+        .route(
+            "/api/commands/update_workflow",
+            post(routes::update_workflow),
+        )
         // D8：所有 /api 请求过 Host / Origin / Sec-Fetch-Site 校验。
         .route_layer(middleware::from_fn(guard::local_only_guard));
 
@@ -995,6 +1003,227 @@ mod tests {
         let body = serde_json::json!({ "workflow": workflow }).to_string();
         let response = app
             .oneshot(post_json("/api/commands/save_workflow", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    // -- workflow-update（Round 3 M3）-----------------------------------------
+    //
+    // 真实流程造数据（复用 workflow_update::test_support）：本地 fixture 注册表
+    // git 仓库 → 真 clone 铺 registry/current 缓存；settings 指向必然 clone
+    // 失败的 GitHub 形态 URL（有无网络都失败）→ fetch_index /
+    // download_to_installed 走生产级离线回退读预置缓存，结果确定性。
+
+    use crate::workflow_update::test_support;
+
+    /// AppState + settings 指向 UNCLONEABLE_URL + 预 clone 的 v1 缓存。
+    /// 返回的 fixture TempDir 须由调用方持有存活（缓存 clone 自该仓库）。
+    fn test_state_with_update_fixture() -> (tempfile::TempDir, Arc<AppState>, tempfile::TempDir) {
+        let fixture = test_support::fixture_repo();
+        let (temp, state) = test_state();
+        test_support::point_registry_at_uncloneable_url(state.ctx());
+        test_support::refresh_cache_from_fixture(
+            state.ctx(),
+            &test_support::repo_source(&fixture),
+        );
+        (temp, state, fixture)
+    }
+
+    #[tokio::test]
+    async fn workflow_update_endpoints_full_round_trip() {
+        let (temp, state, fixture) = test_state_with_update_fixture();
+        let app = build_router(state.clone());
+
+        // download（真实 download_to_installed 离线回退缓存）→ 200；
+        // 薄转发 +1 行 record_source 接线验证：source 元数据落盘且哈希一致。
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/download_workflow",
+                r#"{"path":"alpha-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let installed = temp.path().join("data").join("workflows").join("alpha-flow");
+        assert!(installed.join("workflow.yaml").is_file());
+        let source_file = temp
+            .path()
+            .join("data")
+            .join("workflow-sources")
+            .join("alpha-flow.json");
+        assert!(source_file.is_file(), "record_source 应随下载落盘");
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&source_file).expect("source"))
+                .expect("source json");
+        assert_eq!(meta["path"].as_str(), Some("alpha-flow"));
+        assert_eq!(
+            meta["contentHash"].as_str().expect("contentHash"),
+            crate::fs_ops::hash_dir(&installed).expect("hash")
+        );
+
+        // check → upToDate（下载完成立即检查即最新）
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/check_workflow_updates", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let items = body.as_array().expect("array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["slug"].as_str(), Some("alpha-flow"));
+        assert_eq!(items[0]["state"]["kind"].as_str(), Some("upToDate"));
+        assert_eq!(items[0]["localVersion"].as_str(), Some("0.1.0"));
+
+        // 发布 v2 并刷新缓存 → check → updateAvailable
+        let repo = fixture.path().join("repo");
+        test_support::write_alpha(
+            &repo,
+            test_support::ALPHA_YAML_V2,
+            test_support::ALPHA_README_V2,
+            "0.2.0",
+        );
+        test_support::commit_fixture(&repo, "alpha v2");
+        test_support::refresh_cache_from_fixture(
+            state.ctx(),
+            &test_support::repo_source(&fixture),
+        );
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/check_workflow_updates", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let items = body.as_array().expect("array");
+        assert_eq!(items[0]["state"]["kind"].as_str(), Some("updateAvailable"));
+        assert_eq!(items[0]["state"]["remoteVersion"].as_str(), Some("0.2.0"));
+
+        // update → 200 upToDate 0.2.0 + 备份产生 + 安装内容 == 缓存内容
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/update_workflow",
+                r#"{"slug":"alpha-flow","confirmModified":false}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body["state"]["kind"].as_str(), Some("upToDate"));
+        assert_eq!(body["localVersion"].as_str(), Some("0.2.0"));
+        assert_eq!(
+            crate::fs_ops::hash_dir(&installed).expect("post hash"),
+            crate::fs_ops::hash_dir(
+                &temp
+                    .path()
+                    .join("data")
+                    .join("registry")
+                    .join("current")
+                    .join("alpha-flow")
+            )
+            .expect("cache hash")
+        );
+        assert!(temp
+            .path()
+            .join("data")
+            .join("backups")
+            .join("workflow-updates")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn update_workflow_rejects_unconfirmed_modified_and_bad_requests() {
+        let (temp, state, _fixture) = test_state_with_update_fixture();
+        let app = build_router(state);
+
+        // 先经 download 端点安装（真实链路）。
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/download_workflow",
+                r#"{"path":"alpha-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 本地改动 → Modified 未确认 → 422
+        std::fs::write(
+            temp.path()
+                .join("data")
+                .join("workflows")
+                .join("alpha-flow")
+                .join("README.md"),
+            "# 本地改动\n",
+        )
+        .expect("local edit");
+        // modified 的 wire 形态钉死：kind + remoteChanged（camelCase）。
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/check_workflow_updates", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body[0]["state"]["kind"].as_str(), Some("modified"));
+        assert_eq!(body[0]["state"]["remoteChanged"].as_bool(), Some(false));
+        assert_eq!(body[0]["state"]["remoteVersion"].as_str(), Some("0.1.0"));
+
+        // Modified 未确认 → 422
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/update_workflow",
+                r#"{"slug":"alpha-flow","confirmModified":false}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = body_string(response).await;
+        assert!(body.contains("local modifications"), "body: {body}");
+
+        // 坏 slug → 422（核心 [a-z0-9-]+ 校验浮出为业务错误）
+        for slug in ["..", "../settings", "a/b", "", "UPPER"] {
+            let body = serde_json::json!({ "slug": slug, "confirmModified": false }).to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/update_workflow", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "slug '{slug}'"
+            );
+        }
+
+        // 无 source 的 slug → 422
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/update_workflow",
+                r#"{"slug":"never-installed","confirmModified":false}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn check_workflow_updates_without_cache_is_business_error() {
+        let (_temp, state) = test_state();
+        // settings 指向不可 clone URL 但不铺缓存：clone 失败且无旧缓存可回退。
+        test_support::point_registry_at_uncloneable_url(state.ctx());
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(post_json("/api/commands/check_workflow_updates", "{}"))
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);

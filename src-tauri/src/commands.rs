@@ -263,6 +263,8 @@ pub fn download_workflow(
     let registry_url = workflow_registry_url(&ctx)?;
     // path 原样下传：traversal 防护由 registry-client 的 guard_registry_path 把关。
     let slug = crate::workflow_registry::download_to_installed(&ctx, &registry_url, &path)?;
+    // M3：下载成功记录来源快照（薄转发 +1 行），供三态更新检查比对。
+    crate::workflow_update::record_source(&ctx, &slug, &registry_url, &path)?;
     crate::workflow::list_installed(&ctx)?
         .into_iter()
         .find(|item| item.slug == slug)
@@ -296,6 +298,28 @@ pub fn preview_use_workflow(
 ) -> Result<SyncPlan, String> {
     let ctx = app_context(&app)?;
     crate::workflow_use::preview_use_workflow(&ctx, &slug, targets, method, output_form)
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 workflow-update（M3）：2 个薄转发。slug 合法性由核心校验。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn check_workflow_updates(
+    app: AppHandle,
+) -> Result<Vec<crate::workflow_update::WorkflowUpdateStatus>, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_update::check_all(&ctx)
+}
+
+#[tauri::command]
+pub fn update_workflow(
+    app: AppHandle,
+    slug: String,
+    confirm_modified: bool,
+) -> Result<crate::workflow_update::WorkflowUpdateStatus, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_update::apply_update(&ctx, &slug, confirm_modified)
 }
 
 /// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
