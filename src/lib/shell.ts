@@ -1,4 +1,4 @@
-import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { DirPicker } from "../components/DirPicker";
@@ -51,6 +51,39 @@ export function openUrl(url: string): void {
     return;
   }
   window.open(url, "_blank");
+}
+
+/**
+ * 保存导出包：Tauri 走 plugin-dialog save 选路径后经 save_export_to_path 写文件，
+ * Web 走 Blob 下载。返回是否实际保存（取消选择 = false）。
+ */
+export async function saveExportPackage(filename: string, base64: string): Promise<boolean> {
+  if (isTauriRuntime()) {
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: "工作流分享包", extensions: ["zip"] }]
+    });
+    if (typeof path !== "string") return false;
+    await callApi("save_export_to_path", { path, base64 });
+    return true;
+  }
+  downloadBlob(base64, filename);
+  return true;
+}
+
+/** Web 分支：base64 → Blob 触发浏览器下载。 */
+function downloadBlob(base64: string, filename: string): void {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function revealPath(path: string): void {

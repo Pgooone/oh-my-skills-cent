@@ -306,3 +306,44 @@ export type WorkflowDetail = {
 
 /** preview_use_workflow 的输出形态（OutputForm serde camelCase）。 */
 export type OutputForm = "entryManifest" | "packagedSkill";
+
+// ===== 工作流 v2（round-3，镜像 workflow_update.rs / workflow_share.rs / workflow_push.rs）=====
+
+/** check_workflow_updates 的返回体（WorkflowUpdateStatus serde camelCase）。 */
+export type WorkflowUpdateStatus = {
+  slug: string;
+  state: WorkflowUpdateState;
+  localVersion?: string;
+  remoteVersion?: string;
+};
+
+/** WorkflowUpdateState 为 internally tagged 枚举，判别字段 `kind`（local / upToDate / updateAvailable / modified）。 */
+export type WorkflowUpdateState =
+  | { kind: "local" }
+  | { kind: "upToDate" }
+  | { kind: "updateAvailable"; remoteVersion: string }
+  | { kind: "modified"; remoteChanged: boolean; remoteVersion?: string };
+
+/** export_workflow_package 的返回体（ExportPackage serde camelCase）。 */
+export type ExportPackage = {
+  filename: string;
+  base64: string;
+};
+
+/** import_workflow_package 的返回体（ImportResult serde camelCase，hadSource=包内带来源记录）。 */
+export type ImportResult = {
+  slug: string;
+  hadSource: boolean;
+};
+
+/** push_workflow_to_registry 的返回体（PushResult serde camelCase）。 */
+export type PushResult = {
+  commitHash: string;
+  registryUrl: string;
+};
+
+/** ContributeOutcome 为 internally tagged 枚举，判别字段 `status`（noToken / needFork / ready）。 */
+export type ContributeOutcome =
+  | { status: "noToken" }
+  | { status: "needFork"; forkPageUrl: string }
+  | { status: "ready"; compareUrl: string; branch: string };

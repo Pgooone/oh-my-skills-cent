@@ -1,4 +1,4 @@
-import { Pencil, Play, Trash2 } from "lucide-react";
+import { Package, Pencil, Play, RefreshCw, Trash2, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 import type { StepSkillStatus, Workflow, WorkflowDetailStep } from "../../types";
 
@@ -12,7 +12,10 @@ export function WorkflowDetailPanel({
   busy,
   onUse,
   onEdit,
-  onDelete
+  onDelete,
+  onPush,
+  onExport,
+  onCheckUpdate
 }: {
   workflow: Workflow;
   /** 与 workflow.steps 对齐的归一化视图（含每 skill 状态）。 */
@@ -21,6 +24,9 @@ export function WorkflowDetailPanel({
   onUse: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onPush: () => void;
+  onExport: () => void;
+  onCheckUpdate: () => void;
 }) {
   const metaParts = [
     `v${workflow.version}`,
@@ -43,6 +49,38 @@ export function WorkflowDetailPanel({
           <button className="secondary-button" disabled={busy} onClick={onDelete} type="button">
             <Trash2 size={15} />
             删除
+          </button>
+        </div>
+        <div className="button-pair">
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={onPush}
+            title="推送到注册表仓库"
+            type="button"
+          >
+            <Upload size={15} />
+            推送
+          </button>
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={onExport}
+            title="导出分享包（含引用的 Skill）"
+            type="button"
+          >
+            <Package size={15} />
+            导出
+          </button>
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={onCheckUpdate}
+            title="检查注册表是否有新版本"
+            type="button"
+          >
+            <RefreshCw size={15} />
+            检查更新
           </button>
         </div>
       </DetailField>

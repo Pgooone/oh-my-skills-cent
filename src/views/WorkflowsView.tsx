@@ -1,22 +1,27 @@
-import { AlertTriangle, ChevronDown, ChevronRight, Download, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Download, RefreshCw, Search, Upload } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { UseWorkflowSheet } from "../components/workflow/UseWorkflowSheet";
 import { WorkflowDetailPanel } from "../components/workflow/WorkflowDetailPanel";
 import { WorkflowEditor } from "../components/workflow/WorkflowEditor";
 import { callApi, hasRealBackend } from "../lib/api";
-import { askConfirm } from "../lib/shell";
+import { askConfirm, openUrl, saveExportPackage } from "../lib/shell";
 import type {
   AgentRecord,
   ApplyResult,
+  ContributeOutcome,
+  ExportPackage,
+  ImportResult,
   InstalledWorkflow,
+  PushResult,
   RemoteWorkflowSummary,
   Settings as AppSettings,
   SkillLockEntry,
   SkillRecord,
   Workflow,
   WorkflowDetail,
-  WorkflowDetailStep
+  WorkflowDetailStep,
+  WorkflowUpdateStatus
 } from "../types";
 
 const installedBoardStyle = { "--skill-table-columns": "minmax(260px, 1fr) 180px 90px" } as CSSProperties;
@@ -55,6 +60,9 @@ export function WorkflowsView({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [updateStates, setUpdateStates] = useState<Record<string, WorkflowUpdateStatus>>({});
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const detailRunRef = useRef(0);
   const bootRef = useRef(false);
 
@@ -65,6 +73,7 @@ export function WorkflowsView({
     // 仅首挂载加载一次；后续刷新走 toolbar 与远程区的刷新按钮。
     void refreshInstalled();
     void refreshRemote(false);
+    void refreshUpdateStates(true);
   }, []);
 
   useEffect(() => {
@@ -107,6 +116,160 @@ export function WorkflowsView({
       setRemoteError(reasonMessage(reason));
     } finally {
       setRemoteRefreshing(false);
+    }
+  }
+
+  /** 批量拉取更新状态并刷新徽标；silent=true（首挂载等后台场景）失败时静默。 */
+  async function refreshUpdateStates(silent: boolean): Promise<WorkflowUpdateStatus[] | null> {
+    try {
+      const statuses = await callApi<WorkflowUpdateStatus[]>("check_workflow_updates");
+      setUpdateStates(indexBySlug(statuses));
+      return statuses;
+    } catch (reason) {
+      if (!silent) setError(reasonMessage(reason));
+      return null;
+    }
+  }
+
+  async function checkAllUpdates() {
+    setCheckingUpdates(true);
+    setError(null);
+    try {
+      const statuses = await refreshUpdateStates(false);
+      if (!statuses) return;
+      const available = statuses.filter((entry) => entry.state.kind === "updateAvailable").length;
+      setToast(available > 0 ? `${available} 个工作流有新版本` : "全部工作流已是最新");
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
+
+  async function push(item: InstalledWorkflow) {
+    setBusy(`推送 ${item.name}`);
+    setError(null);
+    try {
+      const result = await callApi<PushResult>("push_workflow_to_registry", { slug: item.slug });
+      setToast(`已推送 ${item.name}（${result.commitHash.slice(0, 7)}）`);
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function exportPackage(item: InstalledWorkflow) {
+    setBusy(`导出 ${item.name}`);
+    setError(null);
+    try {
+      const pkg = await callApi<ExportPackage>("export_workflow_package", { slug: item.slug });
+      const saved = await saveExportPackage(pkg.filename, pkg.base64);
+      if (saved) setToast(`已导出 ${item.name}`);
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** 检查单个工作流更新；Modified 状态先警告「将覆盖本地修改（会先备份）」，确认才发 confirmModified=true。 */
+  async function checkUpdate(item: InstalledWorkflow) {
+    setBusy(`检查更新 ${item.name}`);
+    setError(null);
+    try {
+      const statuses = await refreshUpdateStates(true);
+      const status = statuses?.find((entry) => entry.slug === item.slug);
+      if (!status || status.state.kind === "local") {
+        setToast(`${item.name} 没有远程来源，无需更新`);
+        return;
+      }
+      if (status.state.kind === "upToDate") {
+        setToast(`${item.name} 已是最新版本`);
+        return;
+      }
+      if (status.state.kind === "modified") {
+        const confirmed = await askConfirm(
+          `「${item.name}」包含本地修改。更新将覆盖你的本地修改（更新前会自动备份），是否继续？`,
+          "更新工作流"
+        );
+        if (!confirmed) return;
+        await callApi<WorkflowUpdateStatus>("update_workflow", {
+          slug: item.slug,
+          confirmModified: true
+        });
+      } else {
+        const confirmed = await askConfirm(
+          `检测到新版本 v${status.state.remoteVersion}，是否立即更新「${item.name}」？`,
+          "更新工作流"
+        );
+        if (!confirmed) return;
+        await callApi<WorkflowUpdateStatus>("update_workflow", {
+          slug: item.slug,
+          confirmModified: false
+        });
+      }
+      await refreshInstalled();
+      await refreshUpdateStates(true);
+      setToast(`已更新 ${item.name}`);
+      if (selectedSlug === item.slug) void reloadDetail(item.slug, false);
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** 一键贡献：按返回体 status 字段三分支（noToken→导出胖包+贡献指南引导 / needFork→开 fork 页 / ready→开 compare URL）。 */
+  async function contribute(item: RemoteWorkflowSummary) {
+    setBusy(`贡献 ${item.name}`);
+    setError(null);
+    try {
+      const outcome = await callApi<ContributeOutcome>("contribute_workflow", { slug: item.slug });
+      if (outcome.status === "noToken") {
+        const confirmed = await askConfirm(
+          `未配置 GitHub Token，无法一键贡献。\n\n可先导出分享包，并按官方仓库（${registryLabel}）的贡献指南手动提交。\n是否立即导出分享包？`,
+          "贡献工作流"
+        );
+        const home = registryHomeUrl(settings.workflowRegistryUrl);
+        if (home) openUrl(home);
+        if (confirmed) {
+          const pkg = await callApi<ExportPackage>("export_workflow_package", { slug: item.slug });
+          const saved = await saveExportPackage(pkg.filename, pkg.base64);
+          if (saved) setToast(`已导出 ${item.name}，请按贡献指南提交`);
+        }
+      } else if (outcome.status === "needFork") {
+        openUrl(outcome.forkPageUrl);
+        setToast("请先在 fork 页面创建你的 fork，再重新贡献");
+      } else {
+        openUrl(outcome.compareUrl);
+        setToast(`已推送贡献分支 ${outcome.branch}，请创建 PR`);
+      }
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function pickImportFile() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(file: File) {
+    setBusy(`导入 ${file.name}`);
+    setError(null);
+    try {
+      const archiveBase64 = await readFileAsBase64(file);
+      const result = await callApi<ImportResult>("import_workflow_package", { archiveBase64 });
+      await askConfirm(
+        `已导入工作流「${result.slug}」${result.hadSource ? "（含来源记录）" : ""}。`,
+        "导入成功"
+      );
+      await refreshInstalled();
+      await refreshUpdateStates(true);
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
     }
   }
 
@@ -269,6 +432,17 @@ export function WorkflowsView({
               新建工作流
             </button>
             <button
+              className="project-toolbar-action"
+              disabled={checkingUpdates}
+              onClick={() => void checkAllUpdates()}
+              type="button"
+            >
+              {checkingUpdates ? "检查中…" : "检查全部更新"}
+            </button>
+            <button className="project-toolbar-action" onClick={pickImportFile} type="button">
+              导入分享包
+            </button>
+            <button
               className="icon-button plain"
               onClick={() => {
                 void refreshInstalled();
@@ -279,6 +453,17 @@ export function WorkflowsView({
             >
               <RefreshCw size={17} />
             </button>
+            <input
+              accept=".zip,application/zip"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void handleImportFile(file);
+                event.target.value = "";
+              }}
+              ref={importInputRef}
+              style={{ display: "none" }}
+              type="file"
+            />
           </div>
         </div>
 
@@ -310,6 +495,7 @@ export function WorkflowsView({
                     expanded={expanded}
                     item={item}
                     onSelect={() => void openDetail(item.slug)}
+                    updateStatus={updateStates[item.slug]}
                   />
                   {expanded && (
                     detailLoading || !detail ? (
@@ -319,8 +505,11 @@ export function WorkflowsView({
                     ) : (
                       <WorkflowDetailPanel
                         busy={Boolean(busy)}
+                        onCheckUpdate={() => void checkUpdate(item)}
                         onDelete={() => void remove(item)}
                         onEdit={() => void openEditor(item)}
+                        onExport={() => void exportPackage(item)}
+                        onPush={() => void push(item)}
                         onUse={() => setUseTarget(item)}
                         steps={detail.steps}
                         workflow={detail.workflow}
@@ -378,6 +567,7 @@ export function WorkflowsView({
                 busy={Boolean(busy)}
                 item={item}
                 key={item.path}
+                onContribute={() => void contribute(item)}
                 onDownload={() => void download(item)}
               />
             ))}
@@ -449,11 +639,14 @@ export function WorkflowsView({
 function InstalledRow({
   item,
   expanded,
-  onSelect
+  onSelect,
+  updateStatus
 }: {
   item: InstalledWorkflow;
   expanded: boolean;
   onSelect: () => void;
+  /** check_workflow_updates 的该工作流状态；未拉取时为 undefined（保持既有「正常」）。 */
+  updateStatus?: WorkflowUpdateStatus;
 }) {
   return (
     <article className={`skill-row ${expanded ? "active" : ""}`} onClick={onSelect}>
@@ -473,6 +666,8 @@ function InstalledRow({
         <span className="skill-status-badge check" title={item.error}>
           损坏
         </span>
+      ) : updateStatus ? (
+        <UpdateBadge status={updateStatus} />
       ) : (
         <span className="skill-status-badge ok" title="解析正常">
           正常
@@ -482,13 +677,45 @@ function InstalledRow({
   );
 }
 
+function UpdateBadge({ status }: { status: WorkflowUpdateStatus }) {
+  const state = status.state;
+  if (state.kind === "updateAvailable") {
+    return (
+      <span className="skill-status-badge check" title={`远程有新版本 v${state.remoteVersion}`}>
+        有更新
+      </span>
+    );
+  }
+  if (state.kind === "modified") {
+    return (
+      <span className="skill-status-badge check" title="包含本地修改">
+        已修改
+      </span>
+    );
+  }
+  if (state.kind === "local") {
+    return (
+      <span className="skill-status-badge ok" title="本地创建，无远程来源">
+        本地
+      </span>
+    );
+  }
+  return (
+    <span className="skill-status-badge ok" title="与远程注册表一致">
+      最新
+    </span>
+  );
+}
+
 function RemoteRow({
   item,
   busy,
+  onContribute,
   onDownload
 }: {
   item: RemoteWorkflowSummary;
   busy: boolean;
+  onContribute: () => void;
   onDownload: () => void;
 }) {
   return (
@@ -509,9 +736,19 @@ function RemoteRow({
         <small>{item.author ?? item.slug}</small>
       </div>
       {item.installed ? (
-        <span className="skill-status-badge ok" title="已安装到本地">
-          已安装
-        </span>
+        <button
+          className="secondary-button compact"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onContribute();
+          }}
+          title="一键贡献到官方注册表"
+          type="button"
+        >
+          <Upload size={14} />
+          贡献
+        </button>
       ) : (
         <button
           className="secondary-button compact"
@@ -529,6 +766,34 @@ function RemoteRow({
       )}
     </article>
   );
+}
+
+/** check_workflow_updates 结果按 slug 建索引，供 InstalledRow 徽标 O(1) 查找。 */
+function indexBySlug(statuses: WorkflowUpdateStatus[]): Record<string, WorkflowUpdateStatus> {
+  const index: Record<string, WorkflowUpdateStatus> = {};
+  for (const entry of statuses) index[entry.slug] = entry;
+  return index;
+}
+
+/** 注册表 URL → 仓库主页（去 .git 后缀），无配置时返回 null。 */
+function registryHomeUrl(url?: string): string | null {
+  const trimmed = url?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\.git$/, "").replace(/\/+$/, "");
+}
+
+/** File → base64（读 Data URL 并剥前缀；Web 壳导入分享包的读侧）。 */
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`读取文件失败：${file.name}`));
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      const comma = dataUrl.indexOf(",");
+      resolve(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function filterWorkflows<T extends { name: string; slug: string; description: string; tags: string[]; author?: string }>(
