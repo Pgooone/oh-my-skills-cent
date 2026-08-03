@@ -67,3 +67,11 @@ OMS_BIND 取代 OMS_PORT；readonly 探测收敛 health 单通道；proposal 三
 | ⑥-AC02 | 贡献三态 wire 矛盾（§5.3 Err 通道 vs §8.4 Ok status 字段），跨卡分叉风险 | 钉死 Ok 载荷 `{status:"noToken"/"needFork"/"ready"}`（DD §5.2/§5.3/§8.5 与 C5/C8 同步订正） |
 
 吸收的 minor（13 条，已逐条修卡）：C0 go/no-go 阈值 + NO-GO 备选路径 + timeout 退出码判别；C1 Windows 0600 注明 + 前端非 GitHub 拒绝 + get_settings 裁剪断言 + M2 函数组/resolve_token 优先级断言；C2 数量型弱判据改「零修改全过」；C3 矩阵补第 7 case；C4 负例补 base64 预检共 10 条；C4/C5/C9 卡头依赖补齐；C5 Ready 分支/push rejected 断言；C7 export 30/h 桶触发 + fail-closed 归属；C8 判据机器化（grep 模式）；C10 判据双层表述；C11 AC3 fork 侧 ls-remote、双层分工逐条 ▲/● 标注、AC4/AC6 靶子仓钉死。
+
+---
+
+## 7. 实现期裁决补记（2026-08-03，C2/C4 两起停点）
+
+**C2 停点（方案 2'）**：clone_repo 无条件归一化 vs 两处既有 clone 的「逐字来源测试钩子」契约冲突（本地 fixture 路径过归一化必败）。裁决：git_ops 新增命名原语 `clone_repo_verbatim`（逐字 URL + 防交互 + 凭证 + 脱敏），调用点替换并保留 `Unable to clone {source}` 前缀；URL 防线由上游边界（settings 保存校验 / Workflow::validate / 公开 API normalize）把守。教训：**统一层收敛既有调用前，先核查调用方是否有逐字来源契约（测试钩子）**。
+
+**C4 停点（MSRV fiction）**：`cargo +1.77.2 check` 在 HEAD 本身就失败——repo 声明的 rust-version=1.77.2 早已名存实亡（serde_yml 0.0.13=1.85、axum 0.8.9=1.80、block-buffer=1.85，全仓 63 包超限，清单存档 `msrv-offenders.txt`；R2 引 serde_yml 时遗留，非 zip 引入）。裁决：门禁 3 缩回 W3 本意（zip/base64 API 子树的 1.77.2 scratch 实证），R8 修订为「新增依赖不得抬有效 MSRV」；repo 内 indexmap 不 pin（toml 1.1.2 要求 ≥2.13，pin 不可执行）。**遗留开放问题（用户日后拍板）**：rust-version 升诚实值（≈1.85+）还是全仓降级抢救。

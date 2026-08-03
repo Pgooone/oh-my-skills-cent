@@ -10,6 +10,7 @@ pub mod routes;
 use crate::context::AppContext;
 use crate::models::Settings;
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, Method, StatusCode, Uri},
     middleware,
     response::{IntoResponse, Response},
@@ -19,6 +20,10 @@ use axum::{
 use rust_embed::RustEmbed;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+
+/// 胖包上/下行的请求体上限（门-B4/F4）：仅 export/import 两端点挂，
+/// 其余路由维持框架默认 2MB。base64 形态 50MB 包 ≈ 67MB 字符 + JSON 开销。
+const SHARE_BODY_LIMIT: usize = 96 * 1024 * 1024;
 
 /// 共享 state：业务上下文 + 可刷新的路径白名单（save_settings 后重建）。
 pub struct AppState {
@@ -136,6 +141,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/commands/update_workflow",
             post(routes::update_workflow),
+        )
+        .route(
+            "/api/commands/export_workflow_package",
+            post(routes::export_workflow_package).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
+        )
+        .route(
+            "/api/commands/import_workflow_package",
+            post(routes::import_workflow_package).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
         )
         // D8：所有 /api 请求过 Host / Origin / Sec-Fetch-Site 校验。
         .route_layer(middleware::from_fn(guard::local_only_guard));
@@ -1227,5 +1240,191 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    // -- workflow-share（Round 3 M4）-----------------------------------------
+    //
+    // export 端点正例用无 Ref skill 的占位工作流（生产 export_package 全程
+    // 离线）；Ref 抓取链路由核心单测以真实 clone 覆盖。import 端点正例用核心
+    // 真导出的包（本地 fixture skill 仓库 → 真 clone → 真导出 → HTTP 导入）。
+
+    use crate::workflow_share::test_support as share_fixtures;
+
+    const PLACEHOLDER_ONLY_YAML: &str = "name: 占位流程\n\
+         slug: web-share-flow\n\
+         version: 0.1.0\n\
+         description: web 导出回测\n\
+         groups:\n  - id: g\n    name: 组\n\
+         steps:\n  - name: 步骤一\n    group: g\n    skills:\n\
+         \x20     - placeholder: 待补充\n";
+
+    #[tokio::test]
+    async fn export_workflow_package_returns_filename_and_base64() {
+        let (_temp, state) = test_state();
+        share_fixtures::install_workflow_yaml(state.ctx(), "web-share-flow", PLACEHOLDER_ONLY_YAML);
+        let app = build_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/export_workflow_package",
+                r#"{"slug":"web-share-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(
+            body["filename"].as_str().expect("filename"),
+            "web-share-flow-workflow.zip"
+        );
+        let base64 = body["base64"].as_str().expect("base64");
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64)
+            .expect("decode");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        assert!(archive.by_name("workflow.yaml").is_ok());
+        assert!(archive.by_name("manifest.json").is_ok());
+        // 无来源快照 → 无 source.json；占位流程 → 无 skills/ 条目。
+        assert!(archive.by_name("source.json").is_err());
+
+        // 负例：坏 slug / 未安装 → 422（核心校验浮出为业务错误）。
+        for slug in ["..", "../settings", "UPPER", "a/b", ""] {
+            let body = serde_json::json!({ "slug": slug }).to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/export_workflow_package", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "slug '{slug}'"
+            );
+        }
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/export_workflow_package",
+                r#"{"slug":"not-installed"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn import_workflow_package_installs_real_export() {
+        // 真导出（核心链路，本地 fixture skill 仓库真 clone）。
+        let fixture = share_fixtures::fixture_skill_repo();
+        let repo_source = share_fixtures::repo_source(&fixture);
+        let export_temp = tempfile::tempdir().expect("temp dir");
+        let export_ctx = share_fixtures::test_ctx(&export_temp);
+        share_fixtures::install_share_workflow(&export_ctx);
+        let (_filename, bytes) =
+            share_fixtures::export_with_verbatim_fetch(&export_ctx, "share-flow", &repo_source)
+                .expect("export");
+        share_fixtures::assert_no_residue(&export_ctx);
+        use base64::Engine as _;
+        let archive_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        // HTTP 导入到干净实例。
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+        let body = serde_json::json!({ "archiveBase64": archive_base64 }).to_string();
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/import_workflow_package", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body["slug"].as_str(), Some("share-flow"));
+        assert_eq!(body["hadSource"].as_bool(), Some(true));
+
+        // 再导入 → 已存在冲突 422。
+        let body = serde_json::json!({ "archiveBase64": archive_base64 }).to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/import_workflow_package", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn import_workflow_package_rejects_bad_packages() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        // 非法 base64 → 422
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/import_workflow_package",
+                r#"{"archiveBase64":"not-base64!!!"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // 合法 base64 但缺 workflow.yaml 的 zip → 422
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "README.md",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .expect("start");
+        use std::io::Write as _;
+        writer.write_all(b"# hi").expect("write");
+        let zip_bytes = writer.finish().expect("finish").into_inner();
+        use base64::Engine as _;
+        let body = serde_json::json!({
+            "archiveBase64": base64::engine::general_purpose::STANDARD.encode(zip_bytes)
+        })
+        .to_string();
+        let response = app
+            .oneshot(post_json("/api/commands/import_workflow_package", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn share_endpoints_have_96mb_body_limit_others_keep_default() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        // import 端点：超限（96MB + 余量）→ 413（body limit 先于 base64 预检）。
+        let oversized = "A".repeat(SHARE_BODY_LIMIT + 1024);
+        let body = format!(r#"{{"archiveBase64":"{oversized}"}}"#);
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/import_workflow_package", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        // import 端点：3MB（超框架默认 2MB、低于 96MB）→ 进业务层 422 而非 413。
+        let under_limit = "A".repeat(3_000_000);
+        let body = format!(r#"{{"archiveBase64":"{under_limit}"}}"#);
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/import_workflow_package", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // 未改动的路由维持默认 2MB：save_workflow 3MB → 413。
+        let padded = "A".repeat(3_000_000);
+        let body = format!(r#"{{"workflow":{{"name":"{padded}"}}}}"#);
+        let response = app
+            .oneshot(post_json("/api/commands/save_workflow", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

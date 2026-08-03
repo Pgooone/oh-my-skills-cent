@@ -202,7 +202,7 @@ pub fn apply_update(ctx, slug) -> Result<(), String>;                           
 | R5 | D8 guard | **D8 配套修订【门-B2】**：readonly 模式 Host 校验放行（任意 Host），`Sec-Fetch-Site: cross-site` 仍 403、POST `Origin` host 仍须 == Host（公网同源表单自然满足）；非 readonly 维持 localhost 三值白名单。正反组测试覆盖 |
 | R6 | 摘桃边界 | 既有核心 8 文件业务逻辑零修改，**例外两条【门修订】**：①两处 clone 调用点（workflow_registry.rs:136、skill_ops.rs:221）替换为 M1::clone_repo（凭证 None 时行为与现状完全一致，换取私有注册表读凭证 + 防交互 env 全覆盖）；②测试 fixture 机械补字段（web/jail.rs:211、registry.rs:1433）。其余改动仅限最小清单 |
 | R7 | zip 安全 | 穿越/绝对路径/非 UTF-8 拒绝；50MB 压缩上限 + 200MB 解压上限 + base64 解码前长度预检；导入不落半成品；contribute_upload 复用同一安检链【门-readonly-F11】 |
-| R8 | MSRV 1.77.2 | zip `~4.0`（W3 实证 4.0.0）+ base64 0.23；**Cargo.lock 入库 + indexmap pin 2.9.0**；构建工具链 ≥1.77.2（patch 级比较） |
+| R8 | MSRV | zip `~4.0`（W3 实证 4.0.0）+ base64 0.23；**红线实为「新增依赖不得抬有效 MSRV」**——zip 子树经 1.77.2 scratch 实证。注：Cargo.toml 声明的 rust-version=1.77.2 早已名存实亡（serde_yml 0.0.13=1.85、axum=1.80、block-buffer=1.85，R2 遗留；全仓 63 包清单见 msrv-offenders.txt），升 rust-version 或全仓降级抢救移交开放问题由用户日后拍板 |
 | R9 | 访客滥用面 | contribute_upload：per-IP 滑动窗口 5/h + 20MB + 校验 + PR 人工审核；**export_workflow_package 只读模式并入限流（30/h 宽松桶）**【门-M3】；限流 map 容量上限 + 过期淘汰【门-M6】；bot 独立账号建议；反代 XFF 信任策略见部署文档 |
 | R10 | git/gh 调用约定 | git 全部经 M1（GIT_TERMINAL_PROMPT=0/GCM_INTERACTIVE=never/凭证 -c 注入/身份 -c 注入/stderr 捕获脱敏）；**gh 调用同样捕获 stderr 过 redact_text、`gh --version` 先行探测【门-F15】**；例外面记录【门-F16/token-F4】：`-c extraheader` 与 `GH_TOKEN` env 在进程存活期间对同机同用户可见（ps、/proc/environ、Windows PEB）——个人单机与 Q4 明文文件同级可接受；公共站部署文档注明 bot 主机单用户专用 |
 

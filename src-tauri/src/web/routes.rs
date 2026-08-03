@@ -21,7 +21,7 @@ use crate::models::{
 };
 use crate::workflow::Workflow;
 use crate::workflow_use::OutputForm;
-use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_update, workflow_use};
+use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_share, workflow_update, workflow_use};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -553,6 +553,44 @@ pub async fn update_workflow(
         state.ctx(),
         &request.slug,
         request.confirm_modified,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 workflow-share（M4）：2 个薄转发。无文件路径参数（slug 核心校验），
+// jail 不涉及；请求体上限在 web/mod.rs 路由层单独挂 DefaultBodyLimit（门-B4/F4），
+// base64 预检/解码与导入校验链全在核心 workflow_share。
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportWorkflowPackageRequest {
+    pub slug: String,
+}
+
+pub async fn export_workflow_package(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ExportWorkflowPackageRequest>,
+) -> Response {
+    respond(workflow_share::export_package_base64(
+        state.ctx(),
+        &request.slug,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportWorkflowPackageRequest {
+    pub archive_base64: String,
+}
+
+pub async fn import_workflow_package(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ImportWorkflowPackageRequest>,
+) -> Response {
+    respond(workflow_share::import_package_base64(
+        state.ctx(),
+        &request.archive_base64,
     ))
 }
 

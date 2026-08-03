@@ -322,6 +322,34 @@ pub fn update_workflow(
     crate::workflow_update::apply_update(&ctx, &slug, confirm_modified)
 }
 
+// ---------------------------------------------------------------------------
+// Round 3 workflow-share（M4）：3 个薄转发。save_export_to_path 仅桌面注册
+//（R4/D7：web 不挂）；export/import 的 base64 编解码与校验链全在核心。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn export_workflow_package(
+    app: AppHandle,
+    slug: String,
+) -> Result<crate::workflow_share::ExportPackage, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_share::export_package_base64(&ctx, &slug)
+}
+
+#[tauri::command]
+pub fn import_workflow_package(
+    app: AppHandle,
+    archive_base64: String,
+) -> Result<crate::workflow_share::ImportResult, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_share::import_package_base64(&ctx, &archive_base64)
+}
+
+#[tauri::command]
+pub fn save_export_to_path(path: String, base64: String) -> Result<(), String> {
+    crate::workflow_share::save_export_to_path(&path, &base64)
+}
+
 /// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
 fn workflow_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
     Ok(settings::load_settings(ctx)?

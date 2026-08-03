@@ -1,0 +1,80 @@
+# MSRV 体检清单（2026-08-03，C4 停点证据存档）
+#
+# 方法：`cargo tree --features web -e normal,build`（默认 feature 含 tauri-shell）
+# 全图 361 包，逐包查 crates.io sparse index 的 rust_version 字段，凡 > 1.77.2
+# 即本清单（cargo 1.77.2 对依赖 rust_version 超限是硬错误，最小探针实证：
+# unicode-segmentation 1.13.3 → "requires rustc 1.85.0 or newer"）。
+#
+# 结论：HEAD 本身即过不了 `cargo +1.77.2 check --features web`，rust-version
+# =1.77.2 名存实亡。最早引入是 R2 的 serde_yml 0.0.13（rust 1.85，直接依赖），
+# 另有直接依赖 axum 0.8.9（1.80）/ rust-embed 8.12.0（1.80）；非 C4 的 zip
+# 引入（zip 子树 4.0.0 + indexmap 2.9.0 + hashbrown 0.15.5 + base64 0.23 经
+# 1.77.2 scratch crate 实证可 build+run，探针已删）。
+#
+# 遗留开放问题（移交用户拍板）：rust-version 升诚实值（≈1.85+）还是全仓降级
+# 抢救。处置记录见 design-review.md §7。
+#
+# 格式：<crate> <locked version> rust=<declared rust_version>
+axum-core 0.5.6 rust=1.78
+cargo-platform 0.1.9 rust=1.78
+cargo_metadata 0.19.2 rust=1.78.0
+axum 0.8.9 rust=1.80
+rust-embed 8.12.0 rust=1.80.0
+derive_more 2.1.1 rust=1.81.0
+derive_more-impl 2.1.1 rust=1.81.0
+litemap 0.8.2 rust=1.82
+potential_utf 0.1.5 rust=1.82
+tinystr 0.8.3 rust=1.82
+writeable 0.6.3 rust=1.82
+yoke 0.8.3 rust=1.82
+zerotrie 0.2.4 rust=1.82
+proc-macro-crate 3.5.0 rust=1.82.0
+zerovec 0.11.6 rust=1.83
+async-lock 3.4.2 rust=1.85
+async-signal 0.2.14 rust=1.85
+block-buffer 0.12.1 rust=1.85
+const-oid 0.10.2 rust=1.85
+cpufeatures 0.3.0 rust=1.85
+crypto-common 0.2.2 rust=1.85
+digest 0.11.3 rust=1.85
+dlopen2 0.8.2 rust=1.85
+dlopen2_derive 0.4.3 rust=1.85
+getrandom 0.4.3 rust=1.85
+hybrid-array 0.4.13 rust=1.85
+indexmap 2.14.0 rust=1.85
+serde_spanned 1.1.1 rust=1.85
+sha2 0.11.0 rust=1.85
+toml 1.1.2+spec-1.1.0 rust=1.85
+toml_datetime 1.1.1+spec-1.1.0 rust=1.85
+toml_edit 0.25.12+spec-1.1.0 rust=1.85
+toml_parser 1.1.2+spec-1.1.0 rust=1.85
+toml_writer 1.1.1+spec-1.1.0 rust=1.85
+deranged 0.5.8 rust=1.85.0
+hashbrown 0.17.1 rust=1.85.0
+noyalib 0.0.5 rust=1.85.0
+serde_yml 0.0.13 rust=1.85.0
+unicode-segmentation 1.13.3 rust=1.85.0
+uuid 1.23.3 rust=1.85.0
+icu_collections 2.2.0 rust=1.86
+icu_locale_core 2.2.0 rust=1.86
+icu_normalizer 2.2.0 rust=1.86
+icu_normalizer_data 2.2.0 rust=1.86
+icu_properties 2.2.0 rust=1.86
+icu_properties_data 2.2.0 rust=1.86
+icu_provider 2.2.0 rust=1.86
+idna_adapter 1.2.2 rust=1.86
+zbus 5.16.0 rust=1.87
+zbus_macros 5.16.0 rust=1.87
+zbus_names 4.3.2 rust=1.87
+zvariant 5.12.0 rust=1.87
+zvariant_derive 5.12.0 rust=1.87
+zvariant_utils 3.4.0 rust=1.87
+serde_with 3.21.0 rust=1.88
+serde_with_macros 3.21.0 rust=1.88
+darling 0.23.0 rust=1.88.0
+darling_core 0.23.0 rust=1.88.0
+darling_macro 0.23.0 rust=1.88.0
+plist 1.9.0 rust=1.88.0
+time 0.3.49 rust=1.88.0
+time-core 0.1.9 rust=1.88.0
+time-macros 0.2.29 rust=1.88.0

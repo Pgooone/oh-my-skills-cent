@@ -22,8 +22,8 @@
 
 ## 批次 3 · 功能核心（串行，共享 commands/routes/mod 锁序）
 
-- [ ] C3 workflow-update（三态更新检查）
-- [ ] C4 workflow-share（胖包导出/导入；注意 Cargo.lock + indexmap pin 2.9.0）
+- [x] C3 workflow-update（三态更新检查）（f2d74b5；cargo 默认 122/web 156 全绿（Linux 原生，含 unix 0600 实跑）；**环境切换：本轮后续在主副本 /home/pgoone/oms-wsl/oh-my-skills-cent 施工**）
+- [x] C4 workflow-share（胖包导出/导入）（门禁 137/175 全绿；MSRV 停点 → lead 裁决缩回 W3 本意（scratch 实证过），R8 修订「新增依赖不抬有效 MSRV」；两处队员自主优化：快照差集清扫、导出侧 slug 守卫）
 - [ ] C5 workflow-push（推送/贡献；前置 C0 GO）
 
 ## 批次 4 · skill 注册表

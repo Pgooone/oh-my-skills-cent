@@ -12,6 +12,7 @@ pub mod skill_ops;
 pub mod sync_plan;
 pub mod workflow;
 pub mod workflow_registry;
+pub mod workflow_share;
 pub mod workflow_update;
 pub mod workflow_use;
 #[cfg(feature = "web")]
@@ -61,7 +62,10 @@ pub fn run() {
             commands::delete_workflow,
             commands::preview_use_workflow,
             commands::check_workflow_updates,
-            commands::update_workflow
+            commands::update_workflow,
+            commands::export_workflow_package,
+            commands::import_workflow_package,
+            commands::save_export_to_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running Oh My Skills");
