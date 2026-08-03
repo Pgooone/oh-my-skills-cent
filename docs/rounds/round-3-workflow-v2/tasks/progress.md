@@ -32,7 +32,7 @@
 
 ## 批次 5 · 只读模式
 
-- [ ] C7 readonly-mode（D4/D8 修订 + 白名单 + PublicSettings + 访客上传）
+- [x] C7 readonly-mode（D4/D8 修订 + 白名单 + PublicSettings + 访客上传）（门禁默认 171 / web 232+6 全绿；lead 亲验白名单熔断默认拒绝/D8 联动/fail-closed；**留痕 C11**：route_layer 顺序的确定性判据（cross-site+写命令组合）未在 oneshot 覆盖，端到端补验）
 
 ## 批次 6 · 前端
 

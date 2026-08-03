@@ -2,6 +2,12 @@
 //! （dir-browser，D3 目录选择替代）+ Round 2 workflows 组（7 个薄转发，
 //! 见文件末尾 section）+ Round 3 workflow-update 组（2 个薄转发）+ `GET /api/health`。
 //!
+//! 只读模式（OMS_READONLY=1，M7）在本层的落点：get_settings 改出
+//! PublicSettings 白名单 struct（门-M5）；list_remote_* 强制 refresh=false
+//! （门-M2）；export_workflow_package 并入 30/h 限流（门-M3）；web 专用
+//! contribute_upload（访客上传贡献，DD §8.3，见文件末尾 section）。
+//! 白名单熔断本身在 web/mod.rs 中间件。
+//!
 //! 契约（设计 §2.3）：
 //! - `POST /api/commands/{command_name}`，请求 JSON = 参数 map（camelCase，同 tauri invoke）
 //! - 200 → 返回值 JSON；422 → 业务错误 `{"error": ...}`；403 → jail/guard 拒绝
@@ -17,18 +23,47 @@
 
 use super::AppState;
 use crate::models::{
-    AgentTarget, InstallationRef, ScanOptions, Settings, SyncReplacement,
+    AgentTarget, CustomRoot, InstallationRef, ScanOptions, Settings, SyncReplacement,
 };
 use crate::workflow::Workflow;
+use crate::workflow_push::RegistryKind;
 use crate::workflow_use::OutputForm;
-use crate::{registry, scanner, settings, skill_ops, skill_registry, sync_plan, workflow, workflow_push, workflow_registry, workflow_share, workflow_update, workflow_use};
+use crate::{github_auth, registry, scanner, settings, skill_ops, skill_registry, sync_plan, workflow, workflow_push, workflow_registry, workflow_share, workflow_update, workflow_use};
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, FromRequestParts, State},
+    http::request::Parts,
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::Utc;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
+
+/// ConnectInfo 的非失败提取（门-B5 fail-closed 的需要）：axum 自带的
+/// ConnectInfo 提取失败是 500 rejection，本 extractor 恒成功、缺失时给
+/// None，由 handler 按业务语义判定——只读限流场景 None → 503（宁可拒绝，
+/// 不静默放行）。
+pub struct MaybeConnectInfo(pub Option<SocketAddr>);
+
+impl<S> FromRequestParts<S> for MaybeConnectInfo
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|info| info.0),
+        ))
+    }
+}
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct ErrorBody {
@@ -66,10 +101,16 @@ fn respond(result: Result<impl serde::Serialize, String>) -> Response {
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     pub ok: bool,
+    /// 只读模式探测的唯一通道（门-F10/F-14）：前端启动时经 /api/health 取
+    /// readonly 存独立 state，决定隐藏全部写入口。
+    pub readonly: bool,
 }
 
-pub async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { ok: true })
+pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        ok: true,
+        readonly: state.readonly(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +120,39 @@ pub async fn health() -> Json<HealthResponse> {
 // settings::redacted——githubToken 键不出现，hasGithubToken 告知是否已配置。
 // ---------------------------------------------------------------------------
 
+/// 只读模式出参（门-M5）：白名单 struct，与 Settings 的 serde 物理隔离——
+/// 字段名保留以保前端类型零改动，敏感值置空，serde 层不存在 github_token
+/// 键。language 与两个 registry URL 保留真值（前端 i18n 与来源徽标需要）；
+/// hasGithubToken 恒 false（访客视角无 token）；readonly 恒 true。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicSettings {
+    pub language: String,
+    pub workflow_registry_url: Option<String>,
+    pub skill_registry_url: Option<String>,
+    pub has_github_token: bool,
+    pub readonly: bool,
+    pub library_path: String,
+    pub project_folders: Vec<String>,
+    pub custom_roots: Vec<CustomRoot>,
+    pub show_raw_paths: bool,
+}
+
 pub async fn get_settings(State(state): State<Arc<AppState>>) -> Response {
+    if state.readonly() {
+        let result = settings::load_settings(state.ctx()).map(|loaded| PublicSettings {
+            language: loaded.language,
+            workflow_registry_url: loaded.workflow_registry_url,
+            skill_registry_url: loaded.skill_registry_url,
+            has_github_token: false,
+            readonly: true,
+            library_path: String::new(),
+            project_folders: Vec::new(),
+            custom_roots: Vec::new(),
+            show_raw_paths: false,
+        });
+        return respond(result);
+    }
     respond(settings::load_settings(state.ctx()).map(|loaded| settings::redacted(&loaded)))
 }
 
@@ -408,7 +481,8 @@ pub async fn list_remote_workflows(
 ) -> Response {
     // cache-first（lead 裁决）：refresh=true 强制拉取；false/缺省时优先读缓存，
     // 无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
-    if !request.refresh.unwrap_or(false) {
+    // 只读模式强制 refresh=false（门-M2）：匿名访客不得触发 clone+写盘。
+    if !request.refresh.unwrap_or(false) || state.readonly() {
         if let Some(cached) = workflow_registry::read_cached_index(state.ctx()) {
             return Json(cached).into_response();
         }
@@ -570,8 +644,25 @@ pub struct ExportWorkflowPackageRequest {
 
 pub async fn export_workflow_package(
     State(state): State<Arc<AppState>>,
+    connect_info: MaybeConnectInfo,
     Json(request): Json<ExportWorkflowPackageRequest>,
 ) -> Response {
+    // 只读模式并入限流（门-M3 / R9）：export 每次出站 clone，30/h 宽松桶防
+    // 匿名访客放大。ConnectInfo 提取失败 fail-closed 503（不静默放行）。
+    if state.readonly() {
+        let Some(addr) = connect_info.0 else {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to identify the client address",
+            );
+        };
+        if !state.check_export_rate(addr.ip()) {
+            return error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Export rate limit exceeded (30 per hour); please retry later",
+            );
+        }
+    }
     respond(workflow_share::export_package_base64(
         state.ctx(),
         &request.slug,
@@ -620,7 +711,8 @@ pub async fn list_remote_skills(
 ) -> Response {
     // cache-first（与 list_remote_workflows 同款裁决）：refresh=true 强制拉取；
     // false/缺省时优先读缓存，无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
-    if !request.refresh.unwrap_or(false) {
+    // 只读模式强制 refresh=false（门-M2）：匿名访客不得触发 clone+写盘。
+    if !request.refresh.unwrap_or(false) || state.readonly() {
         if let Some(cached) = skill_registry::read_cached_index(state.ctx()) {
             return Json(cached).into_response();
         }
@@ -728,4 +820,279 @@ pub async fn contribute_skill(
     Json(request): Json<ContributeSkillRequest>,
 ) -> Response {
     respond(workflow_push::contribute_skill(state.ctx(), &request.slug))
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 readonly-mode（M7）：contribute_upload——公共只读站的访客上传贡献
+// 端点（web 专用，无 tauri 对侧，DD §8.3）。
+//
+// 链路（顺序即防线顺序）：ConnectInfo 取 IP（提取失败 fail-closed 503，
+// 门-B5——宁可拒绝，不静默放行）→ 限流 5/h 滑动窗口 → 20MB 上限（base64
+// 字符串先预检再解码）→ 复用 §4.2 安检链全量解包到 staging → 按 kind 校验
+// （workflow: 合法 workflow.yaml + validate；skill: SKILL.md + frontmatter，
+// slug 先过 [a-z0-9-]+ 再进分支名与 gh 参数）→ M5 contribute_to_official
+// （bot token 未配 → Err「站点未开放贡献」）→ gh CLI pr create（--version
+// 先探测；GH_TOKEN env；stderr 过 redact_text；失败降级返回分支 compare URL
+// 并注明）。staging（data_dir/tmp/upload-{ts}/）成败统一清理。
+// ---------------------------------------------------------------------------
+
+/// 访客上传包上限 20MB（R9）。
+const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+/// 对应的 base64 字符串上限（解码前预检，与 §4.2 门-F4 同规则）。
+const MAX_UPLOAD_BASE64_LEN: usize = (MAX_UPLOAD_BYTES + 2) / 3 * 4;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributeUploadRequest {
+    pub kind: String,
+    pub archive_base64: String,
+}
+
+/// 返回体（DD §8.4：{prUrl?, branchUrl?}）：gh 建 PR 成功 → prUrl；未装/失败
+/// 降级 → branchUrl（分支 compare 页，可手动建 PR）+ note 注明。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributeUploadResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+pub async fn contribute_upload(
+    State(state): State<Arc<AppState>>,
+    connect_info: MaybeConnectInfo,
+    Json(request): Json<ContributeUploadRequest>,
+) -> Response {
+    let Some(addr) = connect_info.0 else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to identify the client address",
+        );
+    };
+    if !state.check_upload_rate(addr.ip()) {
+        return error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Upload rate limit exceeded (5 per hour); please retry later",
+        );
+    }
+    respond(run_contribute_upload(state.ctx(), &request))
+}
+
+fn run_contribute_upload(
+    ctx: &crate::context::AppContext,
+    request: &ContributeUploadRequest,
+) -> Result<ContributeUploadResponse, String> {
+    let kind = RegistryKind::parse(&request.kind).ok_or_else(|| {
+        format!(
+            "Invalid kind '{}': expected 'workflow' or 'skill'",
+            request.kind
+        )
+    })?;
+
+    // 20MB 上限（R9）：base64 字符串先预检（解码前拦截），解码后字节复核。
+    if request.archive_base64.len() > MAX_UPLOAD_BASE64_LEN {
+        return Err(format!(
+            "Archive base64 is too long: {} chars (limit {MAX_UPLOAD_BASE64_LEN}, ≈ 20MB archive)",
+            request.archive_base64.len()
+        ));
+    }
+    let bytes = workflow_share::decode_archive_base64(&request.archive_base64)?;
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(format!(
+            "Archive exceeds the 20MB limit: {} bytes",
+            bytes.len()
+        ));
+    }
+
+    // staging：data_dir/tmp/upload-{ts}[-n]/，成败统一清理（含失败分支，
+    // 门-readonly 复用 F13 清理约定）。
+    let tmp_root = ctx.data_dir().join("tmp");
+    crate::fs_ops::ensure_dir(&tmp_root)?;
+    let staging = fresh_upload_dir(&tmp_root)?;
+    let result = upload_from_staging(ctx, kind, &staging, &bytes);
+    let _ = crate::fs_ops::remove_entry(&staging);
+    result
+}
+
+fn upload_from_staging(
+    ctx: &crate::context::AppContext,
+    kind: RegistryKind,
+    staging: &Path,
+    bytes: &[u8],
+) -> Result<ContributeUploadResponse, String> {
+    workflow_share::unpack_archive(bytes, staging)?;
+    let slug = validate_staged_upload(kind, staging)?;
+    let outcome = workflow_push::contribute_to_official(ctx, kind, staging, &slug)?;
+
+    // gh 建 PR（R10）：token 上一步已 resolve 成功（否则已 Err 返回）。
+    let token = github_auth::resolve_token(ctx)
+        .ok_or_else(|| "Contributions are not enabled on this site（站点未开放贡献）".to_string())?;
+    let official = match kind {
+        RegistryKind::Workflow => settings::OFFICIAL_WORKFLOW_REGISTRY_URL,
+        RegistryKind::Skill => settings::OFFICIAL_SKILL_REGISTRY_URL,
+    };
+    let (owner, repo) = github_auth::parse_owner_repo(official)?;
+    let noun = match kind {
+        RegistryKind::Workflow => "workflow",
+        RegistryKind::Skill => "skill",
+    };
+    let title = format!("Add {noun} {slug}");
+
+    match create_pr_with_gh("gh", &owner, &repo, &outcome.branch, &title, &token) {
+        Some(pr_url) => Ok(ContributeUploadResponse {
+            pr_url: Some(pr_url),
+            branch_url: None,
+            note: None,
+        }),
+        None => Ok(ContributeUploadResponse {
+            pr_url: None,
+            branch_url: Some(outcome.branch_url),
+            note: Some(
+                "gh CLI 不可用或创建 PR 失败：分支已推送到官方注册表，请在该页面手动创建 PR（将由维护者人工审核）"
+                    .to_string(),
+            ),
+        }),
+    }
+}
+
+/// staging 内容校验并定 slug（DD §8.3）：workflow = 根含合法 workflow.yaml +
+/// validate（slug 取 yaml 字段，[a-z0-9-]+ 由 validate 把守）；skill = 根含
+/// SKILL.md + 合法 frontmatter（slug 取 frontmatter.name，先过 [a-z0-9-]+
+/// 再进分支名与 gh 参数）。
+fn validate_staged_upload(kind: RegistryKind, staging: &Path) -> Result<String, String> {
+    match kind {
+        RegistryKind::Workflow => {
+            let file = staging.join("workflow.yaml");
+            let text = std::fs::read_to_string(&file).map_err(|error| {
+                format!(
+                    "Archive must contain workflow.yaml at its root ({}: {error})",
+                    crate::fs_ops::path_to_string(&file)
+                )
+            })?;
+            let workflow = Workflow::from_yaml(&text)?;
+            if let Err(errors) = workflow.validate() {
+                return Err(format!(
+                    "Uploaded workflow failed validation: {}",
+                    errors.join("; ")
+                ));
+            }
+            Ok(workflow.slug)
+        }
+        RegistryKind::Skill => {
+            let file = staging.join("SKILL.md");
+            let text = std::fs::read_to_string(&file).map_err(|error| {
+                format!(
+                    "Archive must contain SKILL.md at its root ({}: {error})",
+                    crate::fs_ops::path_to_string(&file)
+                )
+            })?;
+            let (frontmatter, _body) = scanner::parse_skill_markdown(&text);
+            let frontmatter = frontmatter
+                .ok_or_else(|| "SKILL.md is missing valid frontmatter".to_string())?;
+            let slug = frontmatter
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    "SKILL.md frontmatter is missing 'name' (it becomes the skill slug)"
+                        .to_string()
+                })?;
+            // 与 workflow_update::is_valid_slug 同规则（[a-z0-9-]+，模块内同
+            // 规则拷贝，DD §7 先例）——slug 要进分支名与 gh 参数。
+            if !slug
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            {
+                return Err(format!(
+                    "Invalid skill slug '{slug}': must be non-empty and match [a-z0-9-]+"
+                ));
+            }
+            Ok(slug.to_string())
+        }
+    }
+}
+
+/// 分配空 staging 目录：upload-{UTCts}，同秒冲突追加 -1/-2…。
+fn fresh_upload_dir(tmp_root: &Path) -> Result<PathBuf, String> {
+    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    for attempt in 0..100u32 {
+        let candidate = if attempt == 0 {
+            tmp_root.join(format!("upload-{stamp}"))
+        } else {
+            tmp_root.join(format!("upload-{stamp}-{attempt}"))
+        };
+        if !candidate.exists() {
+            crate::fs_ops::ensure_dir(&candidate)?;
+            return Ok(candidate);
+        }
+    }
+    Err("Unable to allocate an upload staging directory".to_string())
+}
+
+/// gh CLI 建 PR（R10）：`gh --version` 先探测（未装 → 降级）；GH_TOKEN env
+/// 注入 + 禁交互；stderr 过 redact_text 后进服务日志。返回 None = 降级，
+/// 调用方回退分支 compare URL。program 参数化以便单测注入假 gh。
+pub(crate) fn create_pr_with_gh(
+    program: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    title: &str,
+    token: &str,
+) -> Option<String> {
+    if Command::new(program).arg("--version").output().is_err() {
+        eprintln!("oms-web: gh CLI not found; falling back to the branch compare URL");
+        return None;
+    }
+    let body = format!(
+        "Uploaded via the public read-only site.\n\n\
+         ## 贡献自测清单\n\n\
+         - [ ] 包目录与 index 条目 slug 一致\n\
+         - [ ] index 条目 8 字段完整（slug/name/version/description/author/tags/icon/path）\n\
+         - [ ] 内容经维护者人工审核\n"
+    );
+    let output = Command::new(program)
+        .args([
+            "pr",
+            "create",
+            "--repo",
+            &format!("{owner}/{repo}"),
+            "--base",
+            "main",
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            &body,
+        ])
+        .env("GH_TOKEN", token)
+        .env("GH_PROMPT_DISABLED", "1")
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // 防御：gh 成功时 stdout 应为一行 PR URL；不符即降级（不臆造 URL）。
+            if url.starts_with("https://github.com/") {
+                Some(url)
+            } else {
+                eprintln!("oms-web: gh pr create returned unexpected output; falling back");
+                None
+            }
+        }
+        Ok(output) => {
+            let stderr =
+                github_auth::redact_text(&String::from_utf8_lossy(&output.stderr), Some(token));
+            eprintln!("oms-web: gh pr create failed: {stderr}");
+            None
+        }
+        Err(error) => {
+            eprintln!("oms-web: unable to run gh pr create: {error}");
+            None
+        }
+    }
 }

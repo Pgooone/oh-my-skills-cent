@@ -5,24 +5,35 @@
 //! - `Host` 头（去端口）必须 ∈ {localhost, 127.0.0.1, [::1]}
 //! - 带 `Sec-Fetch-Site: cross-site` 的请求一律 403
 //! - POST 若带 `Origin` 头：Origin 的 host 部分必须 == 请求 Host
+//!
+//! D8 配套修订（门-B2 / R5）：readonly（公共只读站）下 Host 校验放行——
+//! 公网域名访问的 Host 不再属于三值白名单；`Sec-Fetch-Site: cross-site`
+//! 仍一律 403，POST `Origin` host == Host 校验保留（公网同源表单自然满足）。
+//! 非 readonly 维持现状三值白名单，行为零变化。
 
 use super::routes::error_response;
+use super::AppState;
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     http::{header, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
+use std::sync::Arc;
 
 const ALLOWED_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
 
-pub async fn local_only_guard(request: Request, next: Next) -> Response {
+pub async fn access_guard(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
     let headers = request.headers();
 
     let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
         return forbidden("Missing Host header");
     };
-    if !ALLOWED_HOSTS.contains(&host_without_port(host)) {
+    if !state.readonly() && !ALLOWED_HOSTS.contains(&host_without_port(host)) {
         return forbidden(format!("Host '{host}' is not allowed"));
     }
 

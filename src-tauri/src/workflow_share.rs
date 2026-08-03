@@ -430,6 +430,71 @@ pub fn import_package(ctx: &AppContext, bytes: &[u8]) -> Result<ImportResult, St
     })
 }
 
+/// 访客上传全量解包（C7 contribute_upload 复用，DD §8.3）：与 import_package
+/// 同源的安检链——≤ 50MB → zip 可读 → 逐条目路径安检 → 声明尺寸合计
+/// ≤ 200MB（不解压先拦）→ 预算制实际解压写盘（声明撒谎时的第二道防线）。
+/// 只做解包，不做内容校验（workflow.yaml / SKILL.md 的存在性与合法性由调用方
+/// 按 kind 校验）；staging 目录的创建与清理同样是调用方责任。
+pub fn unpack_archive(bytes: &[u8], dest: &Path) -> Result<(), String> {
+    if bytes.len() > MAX_ARCHIVE_BYTES {
+        return Err(format!(
+            "Archive exceeds the 50MB limit: {} bytes",
+            bytes.len()
+        ));
+    }
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| format!("Archive is not a readable zip: {error}"))?;
+
+    // 第一遍：逐条目路径安检 + 声明尺寸合计（与 import_package 同一防线）。
+    let mut declared_total: u64 = 0;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("Unable to read archive entry {index}: {error}"))?;
+        check_entry_name(file.name_raw())?;
+        declared_total = declared_total.saturating_add(file.size());
+        if declared_total > MAX_UNPACKED_BYTES {
+            return Err(
+                "Archive unpacks to more than the 200MB limit (declared sizes)".to_string(),
+            );
+        }
+    }
+
+    // 第二遍：预算制解压写盘。条目名 UTF-8 已由第一遍保证。
+    let mut budget = MAX_UNPACKED_BYTES;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("Unable to read archive entry {index}: {error}"))?;
+        let name = std::str::from_utf8(file.name_raw())
+            .map_err(|_| "Archive entry name is not valid UTF-8".to_string())?
+            .to_string();
+        let target = dest.join(&name);
+        if file.is_dir() {
+            ensure_dir(&target)?;
+            continue;
+        }
+        let mut data = Vec::new();
+        file.take(budget.saturating_add(1))
+            .read_to_end(&mut data)
+            .map_err(|error| format!("Unable to unpack '{name}': {error}"))?;
+        if data.len() as u64 > budget {
+            return Err("Archive unpacks to more than the 200MB limit".to_string());
+        }
+        budget -= data.len() as u64;
+        if let Some(parent) = target.parent() {
+            ensure_dir(parent)?;
+        }
+        fs::write(&target, &data).map_err(|error| {
+            format!(
+                "Unable to unpack '{name}' to {}: {error}",
+                path_to_string(&target)
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// 桌面专用（不注册 web，R4/D7）：把 `export_workflow_package` 响应的 base64
 /// 落用户选定路径。不走导入的 50MB 预检——导出包不受导入上限约束。
 pub fn save_export_to_path(path: &str, archive_base64: &str) -> Result<(), String> {
@@ -1034,5 +1099,57 @@ mod tests {
 
         let error = save_export_to_path(&path_to_string(&target), "!!!").expect_err("bad base64");
         assert!(error.contains("not valid base64"), "error: {error}");
+    }
+
+    // -- unpack_archive（C7 访客上传解包）--------------------------------------
+
+    #[test]
+    fn unpack_archive_writes_full_tree() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let dest = temp.path().join("staging");
+        let bytes = zip_of(&[
+            (WORKFLOW_FILE, GOOD_YAML.as_bytes()),
+            ("docs/guide.md", b"# guide"),
+            ("docs/assets/logo.txt", b"logo"),
+        ]);
+        unpack_archive(&bytes, &dest).expect("unpack");
+        assert_eq!(
+            fs::read(dest.join(WORKFLOW_FILE)).expect("yaml"),
+            GOOD_YAML.as_bytes()
+        );
+        assert_eq!(
+            fs::read(dest.join("docs").join("guide.md")).expect("guide"),
+            b"# guide"
+        );
+        assert_eq!(
+            fs::read(dest.join("docs").join("assets").join("logo.txt")).expect("logo"),
+            b"logo"
+        );
+    }
+
+    #[test]
+    fn unpack_archive_reuses_import_guard_chain() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        // 非 zip。
+        let error = unpack_archive(b"not a zip", temp.path()).expect_err("not a zip");
+        assert!(error.contains("not a readable zip"), "error: {error}");
+
+        // 超 50MB。
+        let bytes = vec![0u8; MAX_ARCHIVE_BYTES + 1];
+        let error = unpack_archive(&bytes, temp.path()).expect_err("oversize must fail");
+        assert!(error.contains("50MB"), "error: {error}");
+
+        // 穿越 / 绝对路径条目。
+        for name in ["../evil.yaml", "/abs/evil.yaml"] {
+            let bytes = zip_of(&[(name, b"x")]);
+            let dest = temp.path().join("staging");
+            let error = unpack_archive(&bytes, &dest).expect_err("unsafe entry must fail");
+            assert!(error.contains("unsafe path"), "{name}: {error}");
+            assert!(
+                !temp.path().join("evil.yaml").exists(),
+                "{name} 不得写出 staging"
+            );
+        }
     }
 }

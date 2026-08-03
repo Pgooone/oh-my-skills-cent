@@ -1,7 +1,9 @@
 //! Web 壳：axum router 构建、共享 state（AppContext + PathJail）、静态服务。
 //!
 //! 安全护栏集中在这一层：guard 中间件（D8）挂在所有 /api 路由上，
-//! PathJail（D7）由 routes 内对路径参数调用。
+//! PathJail（D7）由 routes 内对路径参数调用。只读模式（OMS_READONLY=1，
+//! R1/R2）追加白名单中间件：POST /api/commands/ 默认拒绝，仅放行
+//! DD §8.2 订正版名单；D8 guard 同步放宽 Host（公网可达），其余校验不变。
 
 pub mod guard;
 pub mod jail;
@@ -10,38 +12,126 @@ pub mod routes;
 use crate::context::AppContext;
 use crate::models::Settings;
 use axum::{
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, Method, StatusCode, Uri},
-    middleware,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
 use rust_embed::RustEmbed;
+use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
-/// 胖包上/下行的请求体上限（门-B4/F4）：仅 export/import 两端点挂，
-/// 其余路由维持框架默认 2MB。base64 形态 50MB 包 ≈ 67MB 字符 + JSON 开销。
+/// 胖包上/下行的请求体上限（门-B4/F4）：仅 export/import/contribute_upload
+/// 端点挂，其余路由维持框架默认 2MB。base64 形态 50MB 包 ≈ 67MB 字符 + JSON 开销。
 const SHARE_BODY_LIMIT: usize = 96 * 1024 * 1024;
 
-/// 共享 state：业务上下文 + 可刷新的路径白名单（save_settings 后重建）。
+/// per-IP 滑动窗口限流器（R9 / 门-M6）：contribute_upload 5/h、只读模式
+/// export 并入 30/h 宽松桶。map 容量上限 + 过期淘汰，防公网访客撑爆内存。
+pub struct RateLimiter {
+    limit: usize,
+    window: Duration,
+    hits: HashMap<IpAddr, VecDeque<Instant>>,
+}
+
+/// 限流 map 容量上限（条）；满员时淘汰最久未活动的条目。
+const RATE_LIMIT_CAPACITY: usize = 1024;
+
+impl RateLimiter {
+    pub fn new(limit: usize, window: Duration) -> Self {
+        Self {
+            limit,
+            window,
+            hits: HashMap::new(),
+        }
+    }
+
+    /// 计一次访问：窗口内未满 → true（放行）；已满 → false（拒绝）。
+    /// now 参数化以便单测注入假时间。
+    pub fn check(&mut self, ip: IpAddr, now: Instant) -> bool {
+        let window = self.window;
+        // 过期淘汰：移出窗口的命中弹出，整条目清空即删除（map 不无界增长）。
+        self.hits.retain(|_, deque| {
+            while let Some(&oldest) = deque.front() {
+                if now.saturating_duration_since(oldest) < window {
+                    break;
+                }
+                deque.pop_front();
+            }
+            !deque.is_empty()
+        });
+        if !self.hits.contains_key(&ip) && self.hits.len() >= RATE_LIMIT_CAPACITY {
+            // 容量上限：淘汰最久未活动的条目（其计数随之清零——宁可误松一次，
+            // 不可内存无界）。
+            if let Some(oldest) = self
+                .hits
+                .iter()
+                .max_by_key(|(_, deque)| deque.back().map(|hit| now.saturating_duration_since(*hit)))
+                .map(|(key, _)| *key)
+            {
+                self.hits.remove(&oldest);
+            }
+        }
+        let deque = self.hits.entry(ip).or_default();
+        if deque.len() >= self.limit {
+            return false;
+        }
+        deque.push_back(now);
+        true
+    }
+}
+
+/// 共享 state：业务上下文 + 可刷新的路径白名单（save_settings 后重建）+
+/// 只读开关与限流桶。
 pub struct AppState {
     ctx: AppContext,
     jail: RwLock<jail::PathJail>,
+    readonly: bool,
+    upload_limiter: Mutex<RateLimiter>,
+    export_limiter: Mutex<RateLimiter>,
 }
 
 impl AppState {
-    pub fn new(ctx: AppContext) -> Result<Self, String> {
+    /// 构造即预热 load_settings（settings 缺失时启动期初始化写盘，发生在
+    /// 启动期而非请求期，门-readonly-F10）。
+    pub fn new(ctx: AppContext, readonly: bool) -> Result<Self, String> {
         let settings = crate::settings::load_settings(&ctx)?;
         Ok(Self {
             jail: RwLock::new(jail::PathJail::new(&ctx, &settings)),
             ctx,
+            readonly,
+            upload_limiter: Mutex::new(RateLimiter::new(5, Duration::from_secs(3600))),
+            export_limiter: Mutex::new(RateLimiter::new(30, Duration::from_secs(3600))),
         })
     }
 
     pub fn ctx(&self) -> &AppContext {
         &self.ctx
+    }
+
+    /// 只读模式（OMS_READONLY=1）：白名单熔断、PublicSettings、限流的总开关。
+    pub fn readonly(&self) -> bool {
+        self.readonly
+    }
+
+    /// contribute_upload 限流（5/h 滑动窗口，R9）：true=放行（本次已计数）。
+    pub fn check_upload_rate(&self, ip: IpAddr) -> bool {
+        self.upload_limiter
+            .lock()
+            .map(|mut limiter| limiter.check(ip, Instant::now()))
+            .unwrap_or(false)
+    }
+
+    /// export_workflow_package 只读模式并入的宽松桶（30/h，门-M3）。
+    pub fn check_export_rate(&self, ip: IpAddr) -> bool {
+        self.export_limiter
+            .lock()
+            .map(|mut limiter| limiter.check(ip, Instant::now()))
+            .unwrap_or(false)
     }
 
     /// D7 严格级校验入口（Tier 2 文件变更类）：routes 对写操作的路径参数调用。
@@ -175,13 +265,66 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/commands/import_workflow_package",
             post(routes::import_workflow_package).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
         )
-        // D8：所有 /api 请求过 Host / Origin / Sec-Fetch-Site 校验。
-        .route_layer(middleware::from_fn(guard::local_only_guard));
+        .route(
+            "/api/commands/contribute_upload",
+            post(routes::contribute_upload).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
+        )
+        // D8 + R2：所有 /api 请求先过 guard（Host / Origin / Sec-Fetch-Site），
+        // readonly 模式再叠白名单熔断。后注册的 route_layer 先执行（guard 最外层）。
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            readonly_whitelist_guard,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            guard::access_guard,
+        ));
 
     Router::new()
         .merge(api)
         .fallback(static_handler)
         .with_state(state)
+}
+
+/// R2 只读熔断（白名单制默认拒绝，DD §8.2 全量对账订正版）：readonly 模式下
+/// POST /api/commands/ 仅放行下列 command，其余一律 403（含 scan_inventory——
+/// 它写盘点缓存；list_dir/discover_project_workspaces 会枚举 home/data_dir
+/// 暴露面，一并移出）。/api/health 是前端探测 readonly 的唯一通道，放行。
+const READONLY_COMMANDS: [&str; 9] = [
+    "read_inventory_cache",
+    "read_skill_lock",
+    "get_settings",
+    "list_installed_workflows",
+    "list_remote_workflows",
+    "get_workflow_detail",
+    "list_remote_skills",
+    "export_workflow_package",
+    "contribute_upload",
+];
+
+async fn readonly_whitelist_guard(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !state.readonly() {
+        return next.run(request).await;
+    }
+    let path = request.uri().path();
+    if path == "/api/health" {
+        return next.run(request).await;
+    }
+    let allowed = path
+        .strip_prefix("/api/commands/")
+        .is_some_and(|name| READONLY_COMMANDS.contains(&name));
+    if allowed {
+        next.run(request).await
+    } else {
+        routes::error_response(
+            StatusCode::FORBIDDEN,
+            "This command is not available in read-only mode",
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +344,14 @@ async fn static_handler(method: Method, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     if path == "api" || path.starts_with("api/") {
         return routes::error_response(StatusCode::NOT_FOUND, "Unknown API endpoint");
+    }
+    // debug-embed 构建从磁盘读资源：拒绝含 `..` 段的路径（目录遍历加固，
+    // 门-readonly-F12）。
+    if path.split('/').any(|segment| segment == "..") {
+        return routes::error_response(
+            StatusCode::FORBIDDEN,
+            "Parent path segments are not allowed",
+        );
     }
 
     let path = if path.is_empty() { "index.html" } else { path };
@@ -228,7 +379,15 @@ mod tests {
     fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
         let temp = tempfile::tempdir().expect("temp");
         let ctx = AppContext::new(temp.path().join("data"), temp.path().join("home"));
-        let state = AppState::new(ctx).expect("state");
+        let state = AppState::new(ctx, false).expect("state");
+        (temp, Arc::new(state))
+    }
+
+    /// 只读模式实例（OMS_READONLY=1 形态）。
+    fn test_state_readonly() -> (tempfile::TempDir, Arc<AppState>) {
+        let temp = tempfile::tempdir().expect("temp");
+        let ctx = AppContext::new(temp.path().join("data"), temp.path().join("home"));
+        let state = AppState::new(ctx, true).expect("state");
         (temp, Arc::new(state))
     }
 
@@ -264,7 +423,7 @@ mod tests {
         let response = app.oneshot(request).await.expect("response");
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(body_string(response).await, r#"{"ok":true}"#);
+        assert_eq!(body_string(response).await, r#"{"ok":true,"readonly":false}"#);
     }
 
     // -- guard 负向 -----------------------------------------------------------
@@ -1968,5 +2127,767 @@ mod tests {
                 "{endpoint} not-installed"
             );
         }
+    }
+
+    // -- readonly-mode（Round 3 M7）------------------------------------------
+    //
+    // R2 白名单熔断正反组 / PublicSettings 形状 / refresh 强制忽略 / D8 配套
+    // 修订 / 两桶限流 / ConnectInfo fail-closed / contribute_upload 负例组 /
+    // static_handler `..` 拒绝 / gh 降级。ConnectInfo 在 oneshot 下经
+    // request extension 注入（与 into_make_service_with_connect_info 同通道）；
+    // 真 TCP 验证归 C11 AC5。
+
+    use axum::extract::ConnectInfo;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::{Duration, Instant};
+
+    const TEST_IP: &str = "203.0.113.7";
+
+    /// 注入 ConnectInfo 的 POST（模拟真 TCP 连接携带的 peer addr）。
+    fn post_json_with_ip(uri: &str, body: &str, ip: &str) -> Request<Body> {
+        let addr = SocketAddr::new(ip.parse::<IpAddr>().expect("ip"), 40000);
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("host", "localhost:8477")
+            .header("content-type", "application/json")
+            .extension(ConnectInfo(addr))
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    }
+
+    // -- RateLimiter 单测（窗口滑动 / 过期淘汰 / 容量上限）----------------------
+
+    #[test]
+    fn rate_limiter_rejects_beyond_limit_and_slides_window() {
+        let mut limiter = RateLimiter::new(2, Duration::from_secs(3600));
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
+        let t0 = Instant::now();
+        assert!(limiter.check(ip, t0), "第 1 次放行");
+        assert!(limiter.check(ip, t0 + Duration::from_secs(1)), "第 2 次放行");
+        assert!(!limiter.check(ip, t0 + Duration::from_secs(2)), "第 3 次拒绝");
+        // 窗口滑动：1h 后最早命中移出窗口，重新放行。
+        assert!(limiter.check(ip, t0 + Duration::from_secs(3601)));
+        // 过期淘汰：整条目移出窗口即从 map 删除（不无界增长）。
+        assert!(limiter.check(ip, t0 + Duration::from_secs(7202)));
+        assert_eq!(limiter.hits.len(), 1, "过期命中已淘汰");
+    }
+
+    #[test]
+    fn rate_limiter_caps_map_and_evicts_least_recent() {
+        let mut limiter = RateLimiter::new(1, Duration::from_secs(3600));
+        let t0 = Instant::now();
+        // 打满容量：RATE_LIMIT_CAPACITY 个不同 IP 各计 1 次。
+        for n in 0..RATE_LIMIT_CAPACITY {
+            let ip = IpAddr::V4(Ipv4Addr::new(10, 0, (n / 256) as u8, (n % 256) as u8));
+            assert!(limiter.check(ip, t0 + Duration::from_secs(n as u64)), "ip {n}");
+        }
+        assert_eq!(limiter.hits.len(), RATE_LIMIT_CAPACITY);
+
+        // 第 CAPACITY+1 个新 IP：淘汰最久未活动条目（10.0.0.0，t+0），map 不越界。
+        let new_ip = IpAddr::V4(Ipv4Addr::new(10, 255, 255, 255));
+        assert!(limiter.check(new_ip, t0 + Duration::from_secs(2000)));
+        assert_eq!(limiter.hits.len(), RATE_LIMIT_CAPACITY, "map 容量有界");
+        assert!(
+            !limiter
+                .hits
+                .contains_key(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0))),
+            "最久未活动条目被淘汰"
+        );
+        // 幸存条目计数未被误清：窗口内第二次仍拒绝。
+        let survivor = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        assert!(!limiter.check(survivor, t0 + Duration::from_secs(2001)));
+    }
+
+    // -- R2 白名单正反组 --------------------------------------------------------
+
+    #[tokio::test]
+    async fn readonly_whitelist_allows_listed_reads() {
+        let (temp, state) = test_state_readonly();
+        // 铺 workflow/skill 注册表缓存与一条已安装 workflow（detail 用）。
+        let current = temp.path().join("data").join("registry").join("current");
+        std::fs::create_dir_all(&current).expect("cache dir");
+        std::fs::write(
+            current.join("index.json"),
+            concat!(
+                "{\"version\":1,\"workflows\":[",
+                "{\"slug\":\"alpha-flow\",\"name\":\"Alpha\",\"version\":\"0.1.0\",",
+                "\"description\":\"a\",\"path\":\"alpha-flow\"}]}",
+            ),
+        )
+        .expect("cached index");
+        let skill_current = temp
+            .path()
+            .join("data")
+            .join("skill-registry")
+            .join("current");
+        std::fs::create_dir_all(&skill_current).expect("skill cache dir");
+        std::fs::write(
+            skill_current.join("index.json"),
+            concat!(
+                "{\"version\":1,\"skills\":[",
+                "{\"slug\":\"alpha-skill\",\"name\":\"Alpha\",\"version\":\"0.1.0\",",
+                "\"description\":\"a\",\"path\":\"skills/alpha-skill\"}]}",
+            ),
+        )
+        .expect("cached skill index");
+        share_fixtures::install_workflow_yaml(state.ctx(), "web-share-flow", PLACEHOLDER_ONLY_YAML);
+        let app = build_router(state);
+
+        // health 是只读探测唯一通道（门-F10）。
+        let request = Request::builder()
+            .uri("/api/health")
+            .header("host", "localhost:8477")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_string(response).await, r#"{"ok":true,"readonly":true}"#);
+
+        // 白名单纯读端点全放行（export/contribute_upload 的放行由各自
+        // 限流/fail-closed 测试覆盖——它们还要求 ConnectInfo）。
+        for command in [
+            "get_settings",
+            "read_inventory_cache",
+            "read_skill_lock",
+            "list_installed_workflows",
+            "list_remote_workflows",
+            "list_remote_skills",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(post_json(&format!("/api/commands/{command}"), "{}"))
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK, "{command}");
+        }
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/get_workflow_detail",
+                r#"{"slug":"web-share-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK, "get_workflow_detail");
+    }
+
+    #[tokio::test]
+    async fn readonly_whitelist_rejects_everything_else() {
+        let (_temp, state) = test_state_readonly();
+        let app = build_router(state);
+
+        // 全部已注册但不在白名单的 command：一律 403（默认拒绝；含
+        // scan_inventory——它写盘点缓存；含 list_dir/discover——枚举暴露面）。
+        for command in [
+            "save_settings",
+            "scan_inventory",
+            "discover_project_workspaces",
+            "preview_batch_sync",
+            "preview_batch_quick_migration",
+            "apply_sync_plan",
+            "check_skills_sh_update",
+            "update_skills_sh_skill",
+            "remove_skill_entries",
+            "list_dir",
+            "download_workflow",
+            "save_workflow",
+            "delete_workflow",
+            "preview_use_workflow",
+            "check_workflow_updates",
+            "update_workflow",
+            "download_skill",
+            "check_registry_skill_updates",
+            "update_registry_skill",
+            "push_workflow_to_registry",
+            "contribute_workflow",
+            "contribute_skill",
+            "import_workflow_package",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(post_json(&format!("/api/commands/{command}"), "{}"))
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{command}");
+        }
+    }
+
+    // -- PublicSettings 形状（门-M5/R3①）---------------------------------------
+
+    #[tokio::test]
+    async fn readonly_get_settings_returns_public_shape() {
+        let (_temp, state) = test_state_readonly();
+        // 核心直写带 token 与自定义 registry 的 settings（save_settings 端点
+        // 只读模式已被熔断，绕过 HTTP）。
+        let mut settings = crate::settings::load_settings(state.ctx()).expect("settings");
+        settings.github_token = Some("ghp_public_secret".to_string());
+        settings.workflow_registry_url =
+            Some("https://github.com/acme/workflows.git".to_string());
+        settings.skill_registry_url = Some("https://github.com/acme/skills.git".to_string());
+        crate::settings::save_settings(state.ctx(), &settings).expect("save");
+
+        let app = build_router(state);
+        let response = app
+            .oneshot(post_json("/api/commands/get_settings", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let object = body.as_object().expect("object");
+
+        // serde 物理隔离：无 githubToken 键。
+        assert!(
+            object.get("githubToken").is_none(),
+            "PublicSettings 不得含 githubToken 键: {body}"
+        );
+        // 9 字段齐全：字段名保留、敏感值置空、registry URL 保留真值。
+        assert_eq!(object.len(), 9, "键集合恰好 9 个: {object:?}");
+        assert_eq!(body["language"].as_str(), Some("zh-CN"));
+        assert_eq!(
+            body["workflowRegistryUrl"].as_str(),
+            Some("https://github.com/acme/workflows.git")
+        );
+        assert_eq!(
+            body["skillRegistryUrl"].as_str(),
+            Some("https://github.com/acme/skills.git")
+        );
+        assert_eq!(body["hasGithubToken"].as_bool(), Some(false));
+        assert_eq!(body["readonly"].as_bool(), Some(true));
+        assert_eq!(body["libraryPath"].as_str(), Some(""));
+        assert_eq!(
+            body["projectFolders"].as_array().expect("array").len(),
+            0
+        );
+        assert_eq!(body["customRoots"].as_array().expect("array").len(), 0);
+        assert_eq!(body["showRawPaths"].as_bool(), Some(false));
+    }
+
+    // -- list_remote_* 只读强制 refresh=false（门-M2）---------------------------
+
+    #[tokio::test]
+    async fn readonly_list_remote_workflows_ignores_refresh() {
+        let fixture = test_support::fixture_repo();
+        let (_temp, state) = test_state_readonly();
+        let source = test_support::repo_source(&fixture);
+        // 缓存铺 v1；settings 指向 fixture（refresh 若生效可拉到 v2）。
+        test_support::refresh_cache_from_fixture(state.ctx(), &source);
+        let mut settings = crate::settings::load_settings(state.ctx()).expect("settings");
+        settings.workflow_registry_url = Some(source.clone());
+        crate::settings::save_settings(state.ctx(), &settings).expect("save");
+        // 发布 v2（不刷新缓存）：远端已新、缓存仍旧。
+        let repo = fixture.path().join("repo");
+        test_support::write_alpha(
+            &repo,
+            test_support::ALPHA_YAML_V2,
+            test_support::ALPHA_README_V2,
+            "0.2.0",
+        );
+        test_support::commit_fixture(&repo, "alpha v2");
+
+        let app = build_router(state);
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/list_remote_workflows",
+                r#"{"refresh":true}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        // refresh=true 被忽略 → 走缓存 → 仍 v1。若未忽略，本地 fixture 路径
+        // 过不了 fetch_index 的 normalize_github_url（C2 逐字来源契约）会
+        // 422；走通也只可能返回 v2——200 + v1 即「被忽略」的完整证明。
+        assert_eq!(body[0]["slug"].as_str(), Some("alpha-flow"));
+        assert_eq!(body[0]["version"].as_str(), Some("0.1.0"));
+    }
+
+    #[tokio::test]
+    async fn readonly_list_remote_skills_ignores_refresh() {
+        let fixture = skill_fixtures::fixture_repo();
+        let (_temp, state) = test_state_readonly();
+        let source = skill_fixtures::repo_source(&fixture);
+        skill_fixtures::seed_cache_from_fixture(state.ctx(), &source);
+        let mut settings = crate::settings::load_settings(state.ctx()).expect("settings");
+        settings.skill_registry_url = Some(source);
+        crate::settings::save_settings(state.ctx(), &settings).expect("save");
+        let repo = fixture.path().join("repo");
+        skill_fixtures::publish_alpha_v2(&repo);
+        skill_fixtures::commit_fixture(&repo, "alpha v2");
+
+        let app = build_router(state);
+        let response = app
+            .oneshot(post_json(
+                "/api/commands/list_remote_skills",
+                r#"{"refresh":true}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body[0]["slug"].as_str(), Some("alpha-skill"));
+        assert_eq!(body[0]["version"].as_str(), Some("0.1.0"), "refresh 被忽略走缓存");
+    }
+
+    // -- D8 配套修订（门-B2/R5）：readonly 放行公网 Host，CSRF 校验保留 ---------
+
+    #[tokio::test]
+    async fn readonly_guard_allows_public_host_but_keeps_csrf_checks() {
+        let (_temp, state) = test_state_readonly();
+        let app = build_router(state);
+
+        // 公网 Host 放行（GET health；非 readonly 下此用例 403，由既有
+        // rejects_non_localhost_host 覆盖，行为零变化）。
+        let request = Request::builder()
+            .uri("/api/health")
+            .header("host", "oms.example.com")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Sec-Fetch-Site: cross-site 仍 403。
+        let request = Request::builder()
+            .uri("/api/health")
+            .header("host", "oms.example.com")
+            .header("sec-fetch-site", "cross-site")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // POST Origin host == Host 放行（公网同源表单自然满足）。
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/commands/get_settings")
+            .header("host", "oms.example.com")
+            .header("content-type", "application/json")
+            .header("origin", "https://oms.example.com")
+            .body(Body::from("{}"))
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Origin 不匹配仍 403。
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/commands/get_settings")
+            .header("host", "oms.example.com")
+            .header("content-type", "application/json")
+            .header("origin", "https://evil.example.com")
+            .body(Body::from("{}"))
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // -- static_handler `..` 段拒绝（门-readonly-F12）---------------------------
+
+    #[tokio::test]
+    async fn static_handler_rejects_dotdot_segments() {
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+
+        for path in ["/../settings.json", "/assets/../../etc/passwd", "/.."] {
+            let request = Request::builder()
+                .uri(path)
+                .header("host", "localhost:8477")
+                .body(Body::empty())
+                .expect("request");
+            let response = app.clone().oneshot(request).await.expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "path: {path}");
+        }
+    }
+
+    // -- export 只读并入 30/h 限流（门-M3/R9）-----------------------------------
+
+    #[tokio::test]
+    async fn readonly_export_is_rate_limited_per_ip() {
+        let (_temp, state) = test_state_readonly();
+        share_fixtures::install_workflow_yaml(state.ctx(), "web-share-flow", PLACEHOLDER_ONLY_YAML);
+        let app = build_router(state);
+        let body = r#"{"slug":"web-share-flow"}"#;
+
+        // 前 30 次放行（占位流程导出全程离线，无网络）。
+        for n in 1..=30 {
+            let response = app
+                .clone()
+                .oneshot(post_json_with_ip(
+                    "/api/commands/export_workflow_package",
+                    body,
+                    TEST_IP,
+                ))
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::OK, "request {n}");
+        }
+        // 第 31 次 → 429（30/h 桶触发）。
+        let response = app
+            .clone()
+            .oneshot(post_json_with_ip(
+                "/api/commands/export_workflow_package",
+                body,
+                TEST_IP,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        // 另一 IP 不受影响（per-IP 桶）。
+        let response = app
+            .clone()
+            .oneshot(post_json_with_ip(
+                "/api/commands/export_workflow_package",
+                body,
+                "203.0.113.8",
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn readonly_export_without_connect_info_is_fail_closed() {
+        let (_temp, state) = test_state_readonly();
+        share_fixtures::install_workflow_yaml(state.ctx(), "web-share-flow", PLACEHOLDER_ONLY_YAML);
+        let app = build_router(state);
+
+        // 无 ConnectInfo（oneshot 不注入）→ fail-closed 503，不静默放行。
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/export_workflow_package",
+                r#"{"slug":"web-share-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        // 对照：非 readonly 不限流，无 ConnectInfo 照常 200。
+        let (_temp2, state2) = test_state();
+        share_fixtures::install_workflow_yaml(state2.ctx(), "web-share-flow", PLACEHOLDER_ONLY_YAML);
+        let app2 = build_router(state2);
+        let response = app2
+            .oneshot(post_json(
+                "/api/commands/export_workflow_package",
+                r#"{"slug":"web-share-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // -- contribute_upload（DD §8.3）--------------------------------------------
+
+    /// 造 zip → base64（Stored 不压缩，与 workflow_share 测试同款手法）。
+    fn upload_zip_base64(entries: &[(&str, &[u8])]) -> String {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        use std::io::Write as _;
+        for (name, content) in entries {
+            writer.start_file(*name, options).expect("start file");
+            writer.write_all(content).expect("write");
+        }
+        let bytes = writer.finish().expect("finish").into_inner();
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    const UPLOAD_GOOD_YAML: &str =
+        "name: 上传流程\nslug: upload-flow\nversion: 0.1.0\ndescription: 上传回测\n";
+    const UPLOAD_SKILL_MD: &str =
+        "---\nname: upload-skill\ndescription: 上传回测\n---\n# body\n";
+
+    fn upload_body(kind: &str, archive_base64: &str) -> String {
+        serde_json::json!({ "kind": kind, "archiveBase64": archive_base64 }).to_string()
+    }
+
+    /// staging 清理断言：data_dir/tmp 不存在或无任何 upload-* 残留。
+    fn assert_no_upload_residue(state: &AppState) {
+        let tmp = state.ctx().data_dir().join("tmp");
+        let Ok(mut entries) = std::fs::read_dir(&tmp) else {
+            return;
+        };
+        assert!(
+            entries.all(|entry| !entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with("upload-")),
+            "tmp/ 不得有 upload-* 残留"
+        );
+    }
+
+    #[tokio::test]
+    async fn contribute_upload_without_connect_info_is_fail_closed() {
+        // 非 readonly（隔离白名单）：无 ConnectInfo → fail-closed 503。
+        let (_temp, state) = test_state();
+        let app = build_router(state);
+        let body = upload_body(
+            "workflow",
+            &upload_zip_base64(&[("workflow.yaml", UPLOAD_GOOD_YAML.as_bytes())]),
+        );
+        let response = app
+            .oneshot(post_json("/api/commands/contribute_upload", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        // readonly 下同样 503（白名单放行后 handler 检查）。
+        let (_temp2, state2) = test_state_readonly();
+        let app2 = build_router(state2);
+        let response = app2
+            .oneshot(post_json("/api/commands/contribute_upload", &body))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn contribute_upload_rejects_bad_requests() {
+        let (_temp, state) = test_state_readonly();
+        let app = build_router(state.clone());
+
+        // 每子用例换一个 IP（坏请求同样计 5/h 桶，防限流干扰）。
+        let mut octet = 100u8;
+        let mut post = |body: String| {
+            octet += 1;
+            post_json_with_ip(
+                "/api/commands/contribute_upload",
+                &body,
+                &format!("203.0.113.{octet}"),
+            )
+        };
+
+        let cases: Vec<(String, &str)> = vec![
+            // 坏 kind。
+            (upload_body("plugin", "AAAA"), "kind"),
+            // 非法 base64。
+            (upload_body("workflow", "not-base64!!!"), "base64"),
+            // 合法 base64 但非 zip。
+            (
+                upload_body("workflow", &{
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.encode(b"not a zip")
+                }),
+                "zip",
+            ),
+            // workflow：缺 workflow.yaml。
+            (
+                upload_body(
+                    "workflow",
+                    &upload_zip_base64(&[("README.md", b"# hi")]),
+                ),
+                "workflow.yaml",
+            ),
+            // workflow：坏 yaml。
+            (
+                upload_body(
+                    "workflow",
+                    &upload_zip_base64(&[("workflow.yaml", b"not: [valid")]),
+                ),
+                "yaml",
+            ),
+            // workflow：yaml slug 非法（validate [a-z0-9-]+）。
+            (
+                upload_body(
+                    "workflow",
+                    &upload_zip_base64(&[(
+                        "workflow.yaml",
+                        b"name: x\nslug: Bad_Slug\nversion: 0.1.0\ndescription: x\n",
+                    )]),
+                ),
+                "slug",
+            ),
+            // skill：缺 SKILL.md。
+            (
+                upload_body("skill", &upload_zip_base64(&[("README.md", b"# hi")])),
+                "SKILL.md",
+            ),
+            // skill：frontmatter 缺失。
+            (
+                upload_body("skill", &upload_zip_base64(&[("SKILL.md", b"# no frontmatter")])),
+                "frontmatter",
+            ),
+            // skill：frontmatter name 缺失（slug 无来源）。
+            (
+                upload_body(
+                    "skill",
+                    &upload_zip_base64(&[("SKILL.md", b"---\ndescription: x\n---\n")]),
+                ),
+                "name",
+            ),
+            // skill：name 非 [a-z0-9-]+（进分支名与 gh 参数前把守）。
+            (
+                upload_body(
+                    "skill",
+                    &upload_zip_base64(&[("SKILL.md", b"---\nname: Bad_Slug\ndescription: x\n---\n")]),
+                ),
+                "slug",
+            ),
+        ];
+
+        for (body, tag) in cases {
+            let response = app.clone().oneshot(post(body)).await.expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "case: {tag}"
+            );
+        }
+        // 全部失败分支 staging 清理干净。
+        assert_no_upload_residue(&state);
+    }
+
+    #[tokio::test]
+    async fn contribute_upload_without_bot_token_reports_not_enabled() {
+        let (_temp, state) = test_state_readonly();
+        let app = build_router(state.clone());
+
+        // 合法包走通解压/校验/staging 全链，止于 bot token 检查
+        // （resolve_token env 优先——置空确保与运行环境无关）。
+        for (kind, entries) in [
+            ("workflow", vec![("workflow.yaml", UPLOAD_GOOD_YAML.as_bytes())]),
+            ("skill", vec![("SKILL.md", UPLOAD_SKILL_MD.as_bytes())]),
+        ] {
+            let body = upload_body(kind, &upload_zip_base64(&entries));
+            let response = {
+                let _guard = PUSH_ENV_LOCK.lock().expect("env lock");
+                std::env::set_var("OMS_GITHUB_TOKEN", "");
+                let response = app
+                    .clone()
+                    .oneshot(post_json_with_ip(
+                        "/api/commands/contribute_upload",
+                        &body,
+                        TEST_IP,
+                    ))
+                    .await
+                    .expect("response");
+                std::env::remove_var("OMS_GITHUB_TOKEN");
+                response
+            };
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{kind}");
+            let text = body_string(response).await;
+            assert!(text.contains("站点未开放贡献"), "{kind}: {text}");
+        }
+        assert_no_upload_residue(&state);
+    }
+
+    #[tokio::test]
+    async fn contribute_upload_is_rate_limited_per_ip() {
+        let (_temp, state) = test_state_readonly();
+        let app = build_router(state);
+        let body = upload_body(
+            "workflow",
+            &upload_zip_base64(&[("workflow.yaml", UPLOAD_GOOD_YAML.as_bytes())]),
+        );
+
+        let responses = {
+            let _guard = PUSH_ENV_LOCK.lock().expect("env lock");
+            std::env::set_var("OMS_GITHUB_TOKEN", "");
+            let mut responses = Vec::new();
+            // 同 IP 连发 6 次：前 5 次进业务（422 未开放贡献），第 6 次 429。
+            for _ in 0..6 {
+                let response = app
+                    .clone()
+                    .oneshot(post_json_with_ip(
+                        "/api/commands/contribute_upload",
+                        &body,
+                        TEST_IP,
+                    ))
+                    .await
+                    .expect("response");
+                responses.push(response.status());
+            }
+            // 另一 IP 不受影响（per-IP 桶）。
+            let response = app
+                .clone()
+                .oneshot(post_json_with_ip(
+                    "/api/commands/contribute_upload",
+                    &body,
+                    "203.0.113.8",
+                ))
+                .await
+                .expect("response");
+            responses.push(response.status());
+            std::env::remove_var("OMS_GITHUB_TOKEN");
+            responses
+        };
+        assert_eq!(
+            responses,
+            vec![
+                StatusCode::UNPROCESSABLE_ENTITY,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ]
+        );
+    }
+
+    // -- gh CLI 建 PR（R10：--version 先探测；失败降级）-------------------------
+
+    #[test]
+    fn create_pr_with_gh_missing_binary_falls_back() {
+        assert!(routes::create_pr_with_gh(
+            "definitely-not-a-real-gh-binary-xyz",
+            "owner",
+            "repo",
+            "upload/demo-20260801T000000Z",
+            "Add workflow demo",
+            "ghp_token",
+        )
+        .is_none());
+    }
+
+    /// 假 gh 脚本（unix）：返回 (tempdir 持有存活, 可执行路径)。
+    #[cfg(unix)]
+    fn fake_gh(script: &str) -> (tempfile::TempDir, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("temp");
+        let path = temp.path().join("gh");
+        std::fs::write(&path, script).expect("write script");
+        let mut permissions = std::fs::metadata(&path).expect("meta").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).expect("chmod");
+        (temp, crate::fs_ops::path_to_string(&path))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_pr_with_gh_success_and_failure() {
+        // 成功：stdout 输出 PR URL → Some(url)。
+        let (_dir, program) = fake_gh("#!/bin/sh\necho 'https://github.com/o/r/pull/123'\n");
+        assert_eq!(
+            routes::create_pr_with_gh(
+                &program,
+                "o",
+                "r",
+                "upload/demo-1",
+                "Add workflow demo",
+                "ghp_token",
+            )
+            .as_deref(),
+            Some("https://github.com/o/r/pull/123")
+        );
+
+        // 失败：退出 1 + stderr 含 token → None 降级（脱敏逻辑本身由
+        // github_auth::redact_text 单测覆盖）。
+        let (_dir2, program2) = fake_gh("#!/bin/sh\necho 'ghp_leaked' >&2\nexit 1\n");
+        assert!(routes::create_pr_with_gh(
+            &program2,
+            "o",
+            "r",
+            "upload/demo-1",
+            "Add workflow demo",
+            "ghp_leaked",
+        )
+        .is_none());
     }
 }
