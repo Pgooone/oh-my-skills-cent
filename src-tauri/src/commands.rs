@@ -393,6 +393,38 @@ pub fn update_registry_skill(app: AppHandle, slug: String) -> Result<(), String>
     crate::skill_registry::apply_update(&ctx, &slug)
 }
 
+// ---------------------------------------------------------------------------
+// Round 3 workflow-push（M5）：3 个薄转发。slug 合法性由核心校验（坏 slug
+// 先于一键推送的官方地址判定）；贡献三态走 Ok 载荷，Err 只给真错误。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn push_workflow_to_registry(
+    app: AppHandle,
+    slug: String,
+) -> Result<crate::workflow_push::PushResult, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_push::push_workflow_to_registry(&ctx, &slug)
+}
+
+#[tauri::command]
+pub fn contribute_workflow(
+    app: AppHandle,
+    slug: String,
+) -> Result<crate::workflow_push::ContributeOutcome, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_push::contribute_workflow(&ctx, &slug)
+}
+
+#[tauri::command]
+pub fn contribute_skill(
+    app: AppHandle,
+    slug: String,
+) -> Result<crate::workflow_push::ContributeOutcome, String> {
+    let ctx = app_context(&app)?;
+    crate::workflow_push::contribute_skill(&ctx, &slug)
+}
+
 /// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
 fn skill_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
     Ok(settings::load_settings(ctx)?

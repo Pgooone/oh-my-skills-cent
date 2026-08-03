@@ -14,7 +14,7 @@
 ## 批次 1 · 地基 + 承重 spike
 
 - [x] C1 git-foundation（M1 git-ops + M2 github-auth + settings 扩展）（60190b4；cargo 默认 104/web 136/tsc/build 全绿；一处偏差返工闭环：fallback email → noreply 形态）
-- [ ] C0 W1 token spike（lead 亲跑 shell 探针；token 到手即做，**C5 开工前必须 GO**）
+- [x] C0 W1 token spike（2026-08-03 lead 亲跑 **GO**：判别性探针组（credential.helper 置空后）纯注入 clone/push 通 + ls-remote hash 全等、失败输出无 token 两形态、无凭证快速失败 exit=128；负对照因本环境无 tty 未复现挂起（风险面在桌面交互终端，防护保留）；环境发现：gh auth login 会给 git 配 credential helper，首跑探针被其掩盖——教训：涉及凭证的探针必须先置空 helper 保证判别性）
 
 ## 批次 2 · 下沉
 
@@ -24,7 +24,7 @@
 
 - [x] C3 workflow-update（三态更新检查）（f2d74b5；cargo 默认 122/web 156 全绿（Linux 原生，含 unix 0600 实跑）；**环境切换：本轮后续在主副本 /home/pgoone/oms-wsl/oh-my-skills-cent 施工**）
 - [x] C4 workflow-share（胖包导出/导入）（门禁 137/175 全绿；MSRV 停点 → lead 裁决缩回 W3 本意（scratch 实证过），R8 修订「新增依赖不抬有效 MSRV」；两处队员自主优化：快照差集清扫、导出侧 slug 守卫）
-- [ ] C5 workflow-push（推送/贡献；前置 C0 GO）
+- [x] C5 workflow-push（推送/贡献；前置 C0 GO）（门禁 169/213 全绿；裸仓全链路真 git 实证；NFR-7 契约已写入注册表克隆 README，lead 负责推送）
 
 ## 批次 4 · skill 注册表
 

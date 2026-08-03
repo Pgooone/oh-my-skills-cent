@@ -156,6 +156,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(routes::update_registry_skill),
         )
         .route(
+            "/api/commands/push_workflow_to_registry",
+            post(routes::push_workflow_to_registry),
+        )
+        .route(
+            "/api/commands/contribute_workflow",
+            post(routes::contribute_workflow),
+        )
+        .route(
+            "/api/commands/contribute_skill",
+            post(routes::contribute_skill),
+        )
+        .route(
             "/api/commands/export_workflow_package",
             post(routes::export_workflow_package).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
         )
@@ -1740,5 +1752,221 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // -- workflow-push（Round 3 M5）-----------------------------------------
+    //
+    // 真实流程造数据（复用 workflow_push::test_support）：本地 bare 注册表
+    // git 仓库（main 分支，含一条 other-flow 既有条目）→ 生产端点真 clone →
+    // 写入 → upsert → commit → push 全链路零外网；contribute 的 NeedFork 分支
+    // 经必然 ls-remote 失败的 GitHub 形态 fork 地址驱动（有无网络结果一致）。
+
+    use crate::workflow_push::test_support as push_fixtures;
+
+    // contribute 三态对 OMS_GITHUB_TOKEN 敏感（resolve_token env 优先）；
+    // 串行化需要操纵该环境变量的用例。
+    static PUSH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn push_workflow_to_registry_endpoint_full_chain() {
+        let fixture = push_fixtures::bare_registry_repo();
+        let (temp, state) = test_state();
+        push_fixtures::install_alpha_workflow(state.ctx());
+        push_fixtures::point_workflow_registry_at(
+            state.ctx(),
+            &push_fixtures::bare_url(&fixture),
+        );
+        let app = build_router(state);
+
+        // 正例：真推送全链路 → 200 {commitHash, registryUrl}。
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/push_workflow_to_registry",
+                r#"{"slug":"alpha-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(
+            body["registryUrl"].as_str().expect("registryUrl"),
+            push_fixtures::bare_url(&fixture)
+        );
+        let commit_hash = body["commitHash"].as_str().expect("commitHash");
+        assert_eq!(commit_hash.len(), 40);
+
+        // 对端可独立核实：clone 回来 index 含 alpha-flow 8 字段条目。
+        let verify = temp.path().join("verify");
+        crate::git_ops::clone_repo_verbatim(
+            &push_fixtures::bare_url(&fixture),
+            &verify,
+            None,
+        )
+        .expect("clone back");
+        let index: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(verify.join("index.json")).expect("index"),
+        )
+        .expect("index json");
+        let array = index["workflows"].as_array().expect("array");
+        assert_eq!(array.len(), 2);
+        assert_eq!(array[1]["slug"].as_str(), Some("alpha-flow"));
+        assert_eq!(array[1]["version"].as_str(), Some("0.1.0"));
+        assert_eq!(array[1]["path"].as_str(), Some("alpha-flow"));
+
+        // 负例：官方地址（默认 settings）→ 422 引导贡献。
+        let (_temp2, state2) = test_state();
+        push_fixtures::install_alpha_workflow(state2.ctx());
+        let app2 = build_router(state2);
+        let response = app2
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/push_workflow_to_registry",
+                r#"{"slug":"alpha-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = body_string(response).await;
+        assert!(body.contains("贡献"), "body: {body}");
+
+        // 负例：坏 slug → 422（核心校验先于官方地址判定）。
+        for slug in ["..", "../settings", "a/b", "", "UPPER"] {
+            let body = serde_json::json!({ "slug": slug }).to_string();
+            let response = app2
+                .clone()
+                .oneshot(post_json("/api/commands/push_workflow_to_registry", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "slug '{slug}'"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn contribute_endpoints_need_fork_and_no_token_wire_forms() {
+        let (_temp, state) = test_state();
+        push_fixtures::provision_identity(state.ctx());
+        push_fixtures::install_alpha_workflow(state.ctx());
+        push_fixtures::install_skill(
+            state.ctx(),
+            "alpha-skill",
+            push_fixtures::ALPHA_SKILL_MD,
+        );
+        // fork（alice 名下的同名仓）必然不存在 → ls-remote 失败 → NeedFork
+        //（有无网络结果一致，速度取决于网络）。
+        push_fixtures::point_workflow_registry_at(
+            state.ctx(),
+            "https://github.com/oms-fixture/nonexistent-workflows-000.git",
+        );
+        push_fixtures::point_skill_registry_at(
+            state.ctx(),
+            "https://github.com/oms-fixture/nonexistent-skills-000.git",
+        );
+        let app = build_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/contribute_workflow",
+                r#"{"slug":"alpha-flow"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body["status"].as_str(), Some("needFork"));
+        assert_eq!(
+            body["forkPageUrl"].as_str(),
+            Some("https://github.com/oms-fixture/nonexistent-workflows-000/fork")
+        );
+
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/contribute_skill",
+                r#"{"slug":"alpha-skill"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body["status"].as_str(), Some("needFork"));
+        assert_eq!(
+            body["forkPageUrl"].as_str(),
+            Some("https://github.com/oms-fixture/nonexistent-skills-000/fork")
+        );
+
+        // noToken：env 置空 + settings 无 token → Ok 载荷 {"status":"noToken"}。
+        let (_temp2, state2) = test_state();
+        let app2 = build_router(state2);
+        let response = {
+            let _guard = PUSH_ENV_LOCK.lock().expect("env lock");
+            std::env::set_var("OMS_GITHUB_TOKEN", "");
+            let response = app2
+                .oneshot(post_json(
+                    "/api/commands/contribute_workflow",
+                    r#"{"slug":"alpha-flow"}"#,
+                ))
+                .await
+                .expect("response");
+            std::env::remove_var("OMS_GITHUB_TOKEN");
+            response
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(
+            body,
+            serde_json::json!({ "status": "noToken" }),
+            "wire 形态钉死：仅 status 一个键"
+        );
+    }
+
+    #[tokio::test]
+    async fn contribute_endpoints_reject_bad_requests() {
+        let (_temp, state) = test_state();
+        push_fixtures::provision_identity(state.ctx());
+        let app = build_router(state);
+
+        // 坏 slug → 422（token+username 已配，进入核心 slug 校验）。
+        for slug in ["..", "../settings", "a/b", "", "UPPER"] {
+            let body = serde_json::json!({ "slug": slug }).to_string();
+            for endpoint in ["contribute_workflow", "contribute_skill"] {
+                let response = app
+                    .clone()
+                    .oneshot(post_json(&format!("/api/commands/{endpoint}"), &body))
+                    .await
+                    .expect("response");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "{endpoint} slug '{slug}'"
+                );
+            }
+        }
+
+        // 未安装内容 → 422（真错误走 Err 通道，不进三态载荷）。
+        for endpoint in ["contribute_workflow", "contribute_skill"] {
+            let response = app
+                .clone()
+                .oneshot(post_json(
+                    &format!("/api/commands/{endpoint}"),
+                    r#"{"slug":"not-installed"}"#,
+                ))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{endpoint} not-installed"
+            );
+        }
     }
 }

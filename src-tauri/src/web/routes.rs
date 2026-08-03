@@ -21,7 +21,7 @@ use crate::models::{
 };
 use crate::workflow::Workflow;
 use crate::workflow_use::OutputForm;
-use crate::{registry, scanner, settings, skill_ops, skill_registry, sync_plan, workflow, workflow_registry, workflow_share, workflow_update, workflow_use};
+use crate::{registry, scanner, settings, skill_ops, skill_registry, sync_plan, workflow, workflow_push, workflow_registry, workflow_share, workflow_update, workflow_use};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -677,4 +677,55 @@ fn workflow_registry_url(ctx: &crate::context::AppContext) -> Result<String, Str
         .workflow_registry_url
         .filter(|url| !url.trim().is_empty())
         .unwrap_or_else(|| settings::OFFICIAL_WORKFLOW_REGISTRY_URL.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 workflow-push（M5）：3 个薄转发。无文件路径参数（slug 由核心校验
+// [a-z0-9-]+，失败即业务错误 422），jail 不涉及；贡献三态走 Ok 载荷
+// （{"status": ...}），Err 只给真错误。
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushWorkflowToRegistryRequest {
+    pub slug: String,
+}
+
+pub async fn push_workflow_to_registry(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PushWorkflowToRegistryRequest>,
+) -> Response {
+    respond(workflow_push::push_workflow_to_registry(
+        state.ctx(),
+        &request.slug,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributeWorkflowRequest {
+    pub slug: String,
+}
+
+pub async fn contribute_workflow(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ContributeWorkflowRequest>,
+) -> Response {
+    respond(workflow_push::contribute_workflow(
+        state.ctx(),
+        &request.slug,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributeSkillRequest {
+    pub slug: String,
+}
+
+pub async fn contribute_skill(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ContributeSkillRequest>,
+) -> Response {
+    respond(workflow_push::contribute_skill(state.ctx(), &request.slug))
 }
