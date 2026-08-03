@@ -143,6 +143,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(routes::update_workflow),
         )
         .route(
+            "/api/commands/list_remote_skills",
+            post(routes::list_remote_skills),
+        )
+        .route("/api/commands/download_skill", post(routes::download_skill))
+        .route(
+            "/api/commands/check_registry_skill_updates",
+            post(routes::check_registry_skill_updates),
+        )
+        .route(
+            "/api/commands/update_registry_skill",
+            post(routes::update_registry_skill),
+        )
+        .route(
             "/api/commands/export_workflow_package",
             post(routes::export_workflow_package).layer(DefaultBodyLimit::max(SHARE_BODY_LIMIT)),
         )
@@ -1237,6 +1250,307 @@ mod tests {
 
         let response = app
             .oneshot(post_json("/api/commands/check_workflow_updates", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    // -- skill-registry（Round 3 M6）-----------------------------------------
+    //
+    // 真实流程造数据（复用 skill_registry::test_support）：本地 fixture skill
+    // 注册表 git 仓库 → 真 clone 铺 skill-registry/current 缓存；settings 指向
+    // 必然 clone 失败的 GitHub 形态 URL → fetch_index / download_skill 走生产级
+    // 离线回退读预置缓存，结果确定性。lock 落点为 ctx fake home（
+    // ~/.agents/.skill-lock.json 以 ctx.home_dir() 展开），测试天然隔离。
+
+    use crate::skill_registry::test_support as skill_fixtures;
+
+    /// AppState + settings 指向 UNCLONEABLE_URL + 预 clone 的 v1 skill 缓存。
+    /// 返回的 fixture TempDir 须由调用方持有存活（缓存 clone 自该仓库）。
+    fn test_state_with_skill_fixture() -> (tempfile::TempDir, Arc<AppState>, tempfile::TempDir) {
+        let fixture = skill_fixtures::fixture_repo();
+        let (temp, state) = test_state();
+        skill_fixtures::point_registry_at_uncloneable_url(state.ctx());
+        skill_fixtures::seed_cache_from_fixture(
+            state.ctx(),
+            &skill_fixtures::repo_source(&fixture),
+        );
+        (temp, state, fixture)
+    }
+
+    fn skill_lock_json(temp: &tempfile::TempDir) -> serde_json::Value {
+        let text = std::fs::read_to_string(
+            temp.path()
+                .join("home")
+                .join(".agents")
+                .join(".skill-lock.json"),
+        )
+        .expect("skill lock");
+        serde_json::from_str(&text).expect("lock json")
+    }
+
+    #[tokio::test]
+    async fn skill_registry_endpoints_full_round_trip() {
+        let (temp, state, fixture) = test_state_with_skill_fixture();
+        let app = build_router(state.clone());
+
+        // list（cache-first，零网络）→ 两条目，均未安装
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/list_remote_skills", "{}"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let items = body.as_array().expect("array");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["slug"].as_str(), Some("alpha-skill"));
+        assert_eq!(items[0]["installed"].as_bool(), Some(false));
+        assert_eq!(items[1]["slug"].as_str(), Some("beta-skill"));
+        assert_eq!(items[1]["installed"].as_bool(), Some(false));
+
+        // download（真实 download_skill 离线回退缓存）→ 200 裸 slug 字符串；
+        // 中心库落盘 + lock 条目写入（归一化 https 形态）
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/download_skill",
+                r#"{"path":"skills/alpha-skill"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body.as_str(), Some("alpha-skill"));
+        let installed = temp
+            .path()
+            .join("home")
+            .join(".oh-my-skills")
+            .join("skills")
+            .join("alpha-skill");
+        assert!(installed.join("SKILL.md").is_file());
+        let lock = skill_lock_json(&temp);
+        assert_eq!(
+            lock["skills"]["alpha-skill"]["sourceUrl"].as_str(),
+            Some(skill_fixtures::UNCLONEABLE_URL)
+        );
+        assert_eq!(
+            lock["skills"]["alpha-skill"]["sourceType"].as_str(),
+            Some("github")
+        );
+        assert_eq!(
+            lock["skills"]["alpha-skill"]["skillPath"].as_str(),
+            Some("skills/alpha-skill")
+        );
+        assert!(lock["skills"]["alpha-skill"]["installedAt"].as_str().is_some());
+        assert!(lock["skills"]["alpha-skill"]["updatedAt"].is_null());
+
+        // list → installed 现算翻转
+        let response = app
+            .clone()
+            .oneshot(post_json("/api/commands/list_remote_skills", "{}"))
+            .await
+            .expect("response");
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body[0]["installed"].as_bool(), Some(true));
+        assert_eq!(body[1]["installed"].as_bool(), Some(false));
+
+        // check → 刚下载即最新（byte-verbatim 前提：hash 一致）
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/check_registry_skill_updates",
+                "{}",
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        let updates = body.as_array().expect("array");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0]["slug"].as_str(), Some("alpha-skill"));
+        assert_eq!(updates[0]["updateAvailable"].as_bool(), Some(false));
+        assert_eq!(updates[0]["remoteVersion"].as_str(), Some("0.1.0"));
+
+        // 发布 v2 并刷新缓存 → check → available
+        let repo = fixture.path().join("repo");
+        skill_fixtures::publish_alpha_v2(&repo);
+        skill_fixtures::commit_fixture(&repo, "alpha v2");
+        skill_fixtures::seed_cache_from_fixture(
+            state.ctx(),
+            &skill_fixtures::repo_source(&fixture),
+        );
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/check_registry_skill_updates",
+                "{}",
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body[0]["updateAvailable"].as_bool(), Some(true));
+        assert_eq!(body[0]["remoteVersion"].as_str(), Some("0.2.0"));
+
+        // update → 200；安装 == 缓存（hash）；备份产生；lock.updatedAt 刷新
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/update_registry_skill",
+                r#"{"slug":"alpha-skill"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            crate::fs_ops::hash_dir(&installed).expect("post hash"),
+            crate::fs_ops::hash_dir(
+                &temp
+                    .path()
+                    .join("data")
+                    .join("skill-registry")
+                    .join("current")
+                    .join("skills")
+                    .join("alpha-skill")
+            )
+            .expect("cache hash")
+        );
+        assert!(temp
+            .path()
+            .join("data")
+            .join("backups")
+            .join("skill-registry-updates")
+            .exists());
+        let lock = skill_lock_json(&temp);
+        assert!(lock["skills"]["alpha-skill"]["updatedAt"].as_str().is_some());
+
+        // 再 check → 回到最新
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/check_registry_skill_updates",
+                "{}",
+            ))
+            .await
+            .expect("response");
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response).await).expect("json");
+        assert_eq!(body[0]["updateAvailable"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn skill_registry_endpoints_reject_bad_requests() {
+        let (_temp, state, _fixture) = test_state_with_skill_fixture();
+        let app = build_router(state.clone());
+
+        // 未在 index 中的 path（含穿越形态）→ 422（查无此条目）
+        for path in ["no/such-skill", "../outside", "", "."] {
+            let body = serde_json::json!({ "path": path }).to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/download_skill", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "path '{path}'"
+            );
+        }
+
+        // 坏 slug → 422（核心 [a-z0-9-]+ 校验浮出为业务错误）
+        for slug in ["..", "../settings", "a/b", "", "UPPER"] {
+            let body = serde_json::json!({ "slug": slug }).to_string();
+            let response = app
+                .clone()
+                .oneshot(post_json("/api/commands/update_registry_skill", &body))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "slug '{slug}'"
+            );
+        }
+
+        // 无 lock 条目的 slug → 422
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/update_registry_skill",
+                r#"{"slug":"never-installed"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // 下载后换注册表 → 同 slug 异源冲突 422（核心单测覆盖零副作用断言）
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/download_skill",
+                r#"{"path":"skills/alpha-skill"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut settings = crate::settings::load_settings(state.ctx()).expect("settings");
+        settings.skill_registry_url =
+            Some("https://github.com/oms-fixture/other-nonexistent-000.git".to_string());
+        crate::settings::save_settings(state.ctx(), &settings).expect("save settings");
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/download_skill",
+                r#"{"path":"skills/alpha-skill"}"#,
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn check_registry_skill_updates_empty_lock_or_missing_cache() {
+        let (temp, state) = test_state();
+        let app = build_router(state.clone());
+
+        // 空 lock → 200 []（无跟踪条目不拉取，离线友好）
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/check_registry_skill_updates",
+                "{}",
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_string(response).await, "[]");
+
+        // 有跟踪条目但无缓存且 clone 必失败 → 422
+        let lock_dir = temp.path().join("home").join(".agents");
+        std::fs::create_dir_all(&lock_dir).expect("lock dir");
+        std::fs::write(
+            lock_dir.join(".skill-lock.json"),
+            concat!(
+                "{\"skills\":{\"alpha-skill\":{",
+                "\"sourceUrl\":\"https://github.com/oms-fixture/nonexistent-skills-repo-000.git\",",
+                "\"skillPath\":\"skills/alpha-skill\"}}}"
+            ),
+        )
+        .expect("lock file");
+        skill_fixtures::point_registry_at_uncloneable_url(state.ctx());
+        let response = app
+            .clone()
+            .oneshot(post_json(
+                "/api/commands/check_registry_skill_updates",
+                "{}",
+            ))
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);

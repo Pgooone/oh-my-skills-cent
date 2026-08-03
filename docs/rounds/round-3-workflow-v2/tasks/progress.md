@@ -28,7 +28,7 @@
 
 ## 批次 4 · skill 注册表
 
-- [ ] C6 skill-registry（客户端 + lock + 批量检查 + 更新执行）
+- [x] C6 skill-registry（客户端 + lock + 批量检查 + 更新执行）（门禁 149/190 全绿；lock 路径裁决：ctx.home_dir()（生产与 expand_home 恒等、测试零竞态），lead 批准留痕）
 
 ## 批次 5 · 只读模式
 

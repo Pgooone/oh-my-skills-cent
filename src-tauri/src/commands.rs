@@ -350,6 +350,57 @@ pub fn save_export_to_path(path: String, base64: String) -> Result<(), String> {
     crate::workflow_share::save_export_to_path(&path, &base64)
 }
 
+// ---------------------------------------------------------------------------
+// Round 3 skill-registry（M6）：4 个薄转发。slug/path 合法性由核心校验。
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_remote_skills(
+    app: AppHandle,
+    refresh: Option<bool>,
+) -> Result<Vec<crate::skill_registry::RemoteSkillSummary>, String> {
+    let ctx = app_context(&app)?;
+    // cache-first（与 list_remote_workflows 同款裁决）：refresh=true 强制拉取；
+    // false/缺省时优先读缓存，无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
+    if !refresh.unwrap_or(false) {
+        if let Some(cached) = crate::skill_registry::read_cached_index(&ctx) {
+            return Ok(cached);
+        }
+    }
+    let registry_url = skill_registry_url(&ctx)?;
+    crate::skill_registry::fetch_index(&ctx, &registry_url)
+}
+
+#[tauri::command]
+pub fn download_skill(app: AppHandle, path: String) -> Result<String, String> {
+    let ctx = app_context(&app)?;
+    let registry_url = skill_registry_url(&ctx)?;
+    // path 原样下传：index 条目查找与 traversal 防护由 skill_registry 把关。
+    crate::skill_registry::download_skill(&ctx, &registry_url, &path)
+}
+
+#[tauri::command]
+pub fn check_registry_skill_updates(
+    app: AppHandle,
+) -> Result<Vec<crate::skill_registry::RegistrySkillUpdate>, String> {
+    let ctx = app_context(&app)?;
+    crate::skill_registry::check_updates(&ctx)
+}
+
+#[tauri::command]
+pub fn update_registry_skill(app: AppHandle, slug: String) -> Result<(), String> {
+    let ctx = app_context(&app)?;
+    crate::skill_registry::apply_update(&ctx, &slug)
+}
+
+/// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
+fn skill_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
+    Ok(settings::load_settings(ctx)?
+        .skill_registry_url
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| settings::OFFICIAL_SKILL_REGISTRY_URL.to_string()))
+}
+
 /// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
 fn workflow_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
     Ok(settings::load_settings(ctx)?

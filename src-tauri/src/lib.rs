@@ -9,6 +9,7 @@ pub mod registry;
 pub mod scanner;
 pub mod settings;
 pub mod skill_ops;
+pub mod skill_registry;
 pub mod sync_plan;
 pub mod workflow;
 pub mod workflow_registry;
@@ -65,6 +66,10 @@ pub fn run() {
             commands::update_workflow,
             commands::export_workflow_package,
             commands::import_workflow_package,
+            commands::list_remote_skills,
+            commands::download_skill,
+            commands::check_registry_skill_updates,
+            commands::update_registry_skill,
             commands::save_export_to_path
         ])
         .run(tauri::generate_context!())

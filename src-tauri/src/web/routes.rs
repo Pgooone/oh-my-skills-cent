@@ -21,7 +21,7 @@ use crate::models::{
 };
 use crate::workflow::Workflow;
 use crate::workflow_use::OutputForm;
-use crate::{registry, scanner, settings, skill_ops, sync_plan, workflow, workflow_registry, workflow_share, workflow_update, workflow_use};
+use crate::{registry, scanner, settings, skill_ops, skill_registry, sync_plan, workflow, workflow_registry, workflow_share, workflow_update, workflow_use};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -592,6 +592,83 @@ pub async fn import_workflow_package(
         state.ctx(),
         &request.archive_base64,
     ))
+}
+
+/// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
+fn skill_registry_url(ctx: &crate::context::AppContext) -> Result<String, String> {
+    Ok(settings::load_settings(ctx)?
+        .skill_registry_url
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| settings::OFFICIAL_SKILL_REGISTRY_URL.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 skill-registry（M6）：4 个薄转发。无文件路径参数（slug 由核心校验
+// [a-z0-9-]+，失败即业务错误 422；download_skill.path 仅作 index 查条目、拷贝
+// 目标经核心 guard_registry_path 把关），jail 不涉及。
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRemoteSkillsRequest {
+    pub refresh: Option<bool>,
+}
+
+pub async fn list_remote_skills(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ListRemoteSkillsRequest>,
+) -> Response {
+    // cache-first（与 list_remote_workflows 同款裁决）：refresh=true 强制拉取；
+    // false/缺省时优先读缓存，无缓存再回退拉取（fetch_index 自带离线回退旧缓存）。
+    if !request.refresh.unwrap_or(false) {
+        if let Some(cached) = skill_registry::read_cached_index(state.ctx()) {
+            return Json(cached).into_response();
+        }
+    }
+    let registry_url = match skill_registry_url(state.ctx()) {
+        Ok(url) => url,
+        Err(error) => return business_error(error),
+    };
+    respond(skill_registry::fetch_index(state.ctx(), &registry_url))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSkillRequest {
+    pub path: String,
+}
+
+pub async fn download_skill(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<DownloadSkillRequest>,
+) -> Response {
+    let registry_url = match skill_registry_url(state.ctx()) {
+        Ok(url) => url,
+        Err(error) => return business_error(error),
+    };
+    // 返回裸 slug 字符串（JSON string），与 tauri 侧的 String 返回两壳一致。
+    respond(skill_registry::download_skill(
+        state.ctx(),
+        &registry_url,
+        &request.path,
+    ))
+}
+
+pub async fn check_registry_skill_updates(State(state): State<Arc<AppState>>) -> Response {
+    respond(skill_registry::check_updates(state.ctx()))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRegistrySkillRequest {
+    pub slug: String,
+}
+
+pub async fn update_registry_skill(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<UpdateRegistrySkillRequest>,
+) -> Response {
+    respond(skill_registry::apply_update(state.ctx(), &request.slug))
 }
 
 /// load_settings 已保证空值回填官方缺省；此处兜底仅为避免解包 panic。
