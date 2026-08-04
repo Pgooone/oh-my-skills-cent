@@ -8,7 +8,12 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:8477"
+      "/api": {
+        target: "http://127.0.0.1:8477",
+        // 保留原始 Host（localhost:1420），否则后端 guard.rs 的
+        // Origin/Host 一致性校验会把代理后的 POST 全部 403
+        changeOrigin: false
+      }
     }
   },
   envPrefix: ["VITE_", "TAURI_"],
