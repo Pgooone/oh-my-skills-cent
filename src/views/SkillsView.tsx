@@ -1,10 +1,11 @@
-import { Check, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Github, RefreshCw, Search, Trash2, XCircle } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FolderOpen, Github, RefreshCw, Search, Trash2, Upload, XCircle } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AgentEmptyVisual, ProjectEmptyVisual } from "../components/EmptyStateVisuals";
 import { AgentBadge, AgentIcon, Coverage, IssueList, SkillState } from "../components/shared";
+import { callApi, hasRealBackend } from "../lib/api";
 import { openUrl, revealPath } from "../lib/shell";
-import { agentSkillCount, centralLibraryReferenceSummary, compactPath, isCentralLibraryReference, projectName, projectStats, samePath, skillListStatus, skillSourceSummary } from "../lib/skillUtils";
-import type { AgentRecord, ProjectWorkspaceCandidate, Settings as AppSettings, SkillLockEntry, SkillRecord, SkillUpdateCheck } from "../types";
+import { agentSkillCount, centralLibraryReferenceSummary, compactPath, isCentralLibraryReference, isRegistryTracked, projectName, projectStats, samePath, skillListStatus, skillSourceSummary } from "../lib/skillUtils";
+import type { AgentRecord, ContributeOutcome, ProjectWorkspaceCandidate, RemoteSkillSummary, Settings as AppSettings, SkillLockEntry, SkillRecord, SkillUpdateCheck } from "../types";
 import type { SkillWorkspace } from "../uiTypes";
 
 export function SkillsView({
@@ -401,6 +402,7 @@ export function SkillsView({
                       skill={skill}
                       agents={agents}
                       skillLocks={skillLocks}
+                      registryUrl={settings.skillRegistryUrl}
                       active={expanded}
                       checked={selectedSkillIds.has(skill.id)}
                       updateCheck={skillUpdateChecks[skill.id]}
@@ -443,6 +445,12 @@ export function SkillsView({
           <ProjectWorkspaceEmptyState onAddProject={onAddProject} onDiscoverProjects={onDiscoverProjects} />
         )}
       </section>
+
+      <SkillRegistrySection
+        realBackend={hasRealBackend()}
+        registryUrl={settings.skillRegistryUrl}
+        onRefresh={onRefresh}
+      />
 
       {selectedCount > 0 && (
         <div className="selection-action-bar" role="region" aria-label="已选 Skills 操作">
@@ -573,6 +581,7 @@ function SkillRow({
   skill,
   agents,
   skillLocks,
+  registryUrl,
   active,
   checked,
   updateCheck,
@@ -585,6 +594,7 @@ function SkillRow({
   skill: SkillRecord;
   agents: AgentRecord[];
   skillLocks: Record<string, SkillLockEntry>;
+  registryUrl?: string;
   active: boolean;
   checked: boolean;
   updateCheck?: SkillUpdateCheck;
@@ -615,6 +625,9 @@ function SkillRow({
         <strong>
           <span className="skill-name-text">{skill.displayName}</span>
           <SourceOwnerTag skill={skill} skillLocks={skillLocks} />
+          {isRegistryTracked(skill, skillLocks, registryUrl) && (
+            <em title="来源：skill 注册表">注册表</em>
+          )}
           {active ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </strong>
         <span className="skill-row-description">{skill.description || skill.slug}</span>
@@ -902,4 +915,265 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
       <div>{children}</div>
     </div>
   );
+}
+
+const skillRemoteBoardStyle = { "--skill-table-columns": "minmax(260px, 1fr) 180px 100px" } as CSSProperties;
+
+/**
+ * Skill 注册表远程区（镜像 WorkflowsView 远程区）：列表 / 下载（进中心库）/
+ * 贡献（contribute_skill）+ 来源标签。数据自管（经 callApi）；演示模式只给空态。
+ */
+function SkillRegistrySection({
+  realBackend,
+  registryUrl,
+  onRefresh
+}: {
+  realBackend: boolean;
+  registryUrl?: string;
+  onRefresh: () => void;
+}) {
+  const [remote, setRemote] = useState<RemoteSkillSummary[] | null>(null);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteRefreshing, setRemoteRefreshing] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [toast, setToast] = useState<string | null>(null);
+  const bootRef = useRef(false);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // 仅首挂载加载一次；后续刷新走刷新按钮（镜像 WorkflowsView）。
+  useEffect(() => {
+    if (bootRef.current) return;
+    bootRef.current = true;
+    if (realBackend) void refreshRemote(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function refreshRemote(refresh: boolean) {
+    setRemoteRefreshing(true);
+    setRemoteError(null);
+    try {
+      const list = await callApi<RemoteSkillSummary[]>("list_remote_skills", { refresh });
+      setRemote(list);
+    } catch (reason) {
+      setRemote(null);
+      setRemoteError(reasonMessage(reason));
+    } finally {
+      setRemoteRefreshing(false);
+    }
+  }
+
+  async function download(item: RemoteSkillSummary) {
+    setBusy(`下载 ${item.name}`);
+    setRemoteError(null);
+    try {
+      await callApi("download_skill", { path: item.path });
+      setRemote((current) =>
+        current?.map((entry) => (entry.path === item.path ? { ...entry, installed: true } : entry)) ?? current
+      );
+      setToast(`已安装 ${item.name} 到中心库`);
+      // 中心库新增内容 → 重新扫描（更新触发链随之刷新 registry 更新提示）。
+      onRefresh();
+    } catch (reason) {
+      setRemoteError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** 一键贡献：按返回体 status 字段三分支（noToken→开注册表主页引导 / needFork→开 fork 页 / ready→开 compare URL）。 */
+  async function contribute(item: RemoteSkillSummary) {
+    setBusy(`贡献 ${item.name}`);
+    setRemoteError(null);
+    try {
+      const outcome = await callApi<ContributeOutcome>("contribute_skill", { slug: item.slug });
+      if (outcome.status === "noToken") {
+        const home = registryHomeUrl(registryUrl);
+        if (home) openUrl(home);
+        setToast(`未配置 GitHub Token：已打开注册表主页（${registryLabel}）的贡献指南，也可在「设置 → 数据」配置 Token 后重试`);
+      } else if (outcome.status === "needFork") {
+        openUrl(outcome.forkPageUrl);
+        setToast("请先在 fork 页面创建你的 fork，再重新贡献");
+      } else {
+        openUrl(outcome.compareUrl);
+        setToast(`已推送贡献分支 ${outcome.branch}，请创建 PR`);
+      }
+    } catch (reason) {
+      setRemoteError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const registryLabel = registrySourceLabel(registryUrl);
+  const downloadableCount = (remote ?? []).filter((item) => !item.installed).length;
+
+  return (
+    <>
+      <div className="skills-summary">
+        <span className="skills-summary-text">
+          远程注册表 · {remote ? `${downloadableCount} 个可下载` : "未加载"} · 来自 {registryLabel}
+        </span>
+        <button
+          className="icon-button plain"
+          disabled={remoteRefreshing}
+          onClick={() => void refreshRemote(true)}
+          title="刷新远程注册表"
+          type="button"
+        >
+          <RefreshCw className={remoteRefreshing ? "spin" : ""} size={15} />
+        </button>
+      </div>
+
+      {remoteError && (
+        <div className="banner error" role="alert">
+          <AlertTriangle size={17} />
+          <span>{remoteError}</span>
+        </div>
+      )}
+
+      <div className="skill-list-board" style={skillRemoteBoardStyle}>
+        <div className="skill-table-head">
+          <span>Skill</span>
+          <span>信息</span>
+          <span>操作</span>
+        </div>
+        <div className="skill-list">
+          {(remote ?? []).map((item) => (
+            <SkillRemoteRow
+              busy={Boolean(busy)}
+              item={item}
+              key={item.path}
+              onContribute={() => void contribute(item)}
+              onDownload={() => void download(item)}
+            />
+          ))}
+          {!realBackend && (
+            <section className="agent-empty-state" aria-label="远程注册表空状态">
+              <ProjectEmptyVisual />
+              <div className="agent-empty-copy">
+                <strong>演示模式暂无注册表数据</strong>
+                <span>连接后端（桌面应用或 oms-web）后，这里会显示注册表中的可下载 Skills。</span>
+              </div>
+            </section>
+          )}
+          {realBackend && remote === null && (
+            <section className="agent-empty-state" aria-label="远程注册表空状态">
+              <ProjectEmptyVisual />
+              <div className="agent-empty-copy">
+                <strong>{remoteRefreshing ? "正在拉取远程注册表…" : "远程注册表暂未加载"}</strong>
+                <span>
+                  {remoteError
+                    ? remoteError
+                    : "注册表地址来自「设置 → 数据 → Skill 注册表 URL」，请确认网络可用后重试。"}
+                </span>
+              </div>
+              {!remoteRefreshing && (
+                <button className="secondary-button" onClick={() => void refreshRemote(true)} type="button">
+                  重新拉取
+                </button>
+              )}
+            </section>
+          )}
+          {realBackend && remote !== null && remote.length === 0 && (
+            <section className="agent-empty-state" aria-label="远程注册表空状态">
+              <ProjectEmptyVisual />
+              <div className="agent-empty-copy">
+                <strong>注册表暂无可下载的 Skills</strong>
+                <span>{`当前注册表（${registryLabel}）还没有条目，可在「设置 → 数据」更换注册表 URL。`}</span>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </>
+  );
+}
+
+function SkillRemoteRow({
+  item,
+  busy,
+  onContribute,
+  onDownload
+}: {
+  item: RemoteSkillSummary;
+  busy: boolean;
+  onContribute: () => void;
+  onDownload: () => void;
+}) {
+  return (
+    <article className="skill-row">
+      <div className="skill-row-main">
+        <strong>
+          <span className="skill-name-text">{item.name}</span>
+          {item.tags.slice(0, 2).map((tag) => (
+            <em key={tag} title={`标签：${tag}`}>
+              {tag}
+            </em>
+          ))}
+        </strong>
+        <span className="skill-row-description">{item.description || item.slug}</span>
+      </div>
+      <div className="skill-reference-cell" title={item.author ? `作者：${item.author}` : item.slug}>
+        <span>v{item.version}</span>
+        <small>{item.author ?? item.slug}</small>
+      </div>
+      {item.installed ? (
+        <button
+          className="secondary-button compact"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onContribute();
+          }}
+          title="一键贡献到官方注册表"
+          type="button"
+        >
+          <Upload size={14} />
+          贡献
+        </button>
+      ) : (
+        <button
+          className="secondary-button compact"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDownload();
+          }}
+          title="下载并安装到中心库"
+          type="button"
+        >
+          <Download size={14} />
+          下载
+        </button>
+      )}
+    </article>
+  );
+}
+
+const DEFAULT_SKILL_REGISTRY_LABEL = "Pgooone/oh-my-skills-skills";
+
+/** 注册表 URL → 仓库主页（去 .git 后缀），无配置时返回 null。 */
+function registryHomeUrl(url?: string): string | null {
+  const trimmed = url?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\.git$/, "").replace(/\/+$/, "");
+}
+
+function registrySourceLabel(url?: string) {
+  const trimmed = url?.trim();
+  if (!trimmed) return DEFAULT_SKILL_REGISTRY_LABEL;
+  const match = trimmed.match(/github\.com[/:]([^/]+\/[^/.]+)/);
+  if (match) return match[1];
+  return trimmed;
+}
+
+function reasonMessage(reason: unknown) {
+  return reason instanceof Error ? reason.message : String(reason);
 }

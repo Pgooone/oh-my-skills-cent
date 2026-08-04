@@ -347,3 +347,25 @@ export type ContributeOutcome =
   | { status: "noToken" }
   | { status: "needFork"; forkPageUrl: string }
   | { status: "ready"; compareUrl: string; branch: string };
+
+// ===== skill 注册表（round-3，镜像 src-tauri skill_registry.rs / workflow_push.rs）=====
+
+/** list_remote_skills 的返回体（RemoteSkillSummary serde camelCase）。 */
+export type RemoteSkillSummary = {
+  slug: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  tags: string[];
+  icon?: string;
+  path: string;
+  installed: boolean;
+};
+
+/** check_registry_skill_updates 的返回体（RegistrySkillUpdate serde camelCase，批量一次 clone）。 */
+export type RegistrySkillUpdate = {
+  slug: string;
+  updateAvailable: boolean;
+  remoteVersion?: string;
+};

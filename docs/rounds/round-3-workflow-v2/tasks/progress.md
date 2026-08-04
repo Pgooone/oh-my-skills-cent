@@ -36,8 +36,8 @@
 
 ## 批次 6 · 前端
 
-- [ ] C8 frontend-workflows
-- [ ] C9 frontend-skills（含 W4 单元层红→绿）
+- [x] C8 frontend-workflows（34cc563；tsc/build 绿；lead 修正：callApi 统一回泛型风格 + 补 await）
+- [x] C9 frontend-skills（含 W4 单元层红→绿）（vitest 基建落地 + W4 红→绿纪律真实（5 failed→10 passed）；tsc/build/vitest 全绿；lead 修正：callApi 统一回泛型风格。**注：实际跑在 DeepSeek（sonnet 标签被路由），lead 按最高强度逐行复核通过**）
 - [ ] C10 frontend-readonly
 
 ## 批次 7 · 收口

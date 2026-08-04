@@ -6,7 +6,7 @@ import { TabButton } from "./components/TabButton";
 import { callApi, hasRealBackend, probeRealBackend } from "./lib/api";
 import { demoBatchPlan, demoInventory, demoSkillLocks } from "./lib/demoData";
 import { askConfirm, pickDirectory } from "./lib/shell";
-import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibraryReference, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
+import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibraryReference, isRegistrySource, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
 import type { QuickMigrationMethod, SkillWorkspace, SyncMode, View } from "./uiTypes";
 import { SkillsView } from "./views/SkillsView";
 import { SyncView } from "./views/SyncView";
@@ -16,6 +16,7 @@ import type {
   ApplyResult,
   InventorySnapshot,
   ProjectWorkspaceCandidate,
+  RegistrySkillUpdate,
   Settings as AppSettings,
   SkillLockEntry,
   SkillRecord,
@@ -254,6 +255,9 @@ export default function App() {
       setSyncQueuedSkillIds((current) => {
         return filterValidSelectionKeys(current, aggregateSkillsBySlug(next.skills), projectFoldersForSelection);
       });
+      // 触发链接线（DD §8.5 门-B6）：扫描数据就绪后刷新更新检查，不阻塞扫描完成。
+      // 必须位于 setSkillUpdateChecks({}) 重置之后，避免结果被清零。
+      void refreshSkillsShUpdateChecks(aggregateSkillsBySlug(next.skills), locks);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -570,9 +574,17 @@ export default function App() {
 
   async function refreshSkillsShUpdateChecks(skills: SkillRecord[], locks: Record<string, SkillLockEntry>) {
     if (!hasRealBackend() || skills.length === 0) return;
+    const registryTrackedSkills: SkillRecord[] = [];
     for (const skill of skills) {
       const source = skillsShUpdateSource(skill, locks);
       if (!source) continue;
+      // 检查分流（DD §8.5）：lock.sourceUrl 归一化 == skillRegistryUrl → 收集后
+      // 走批量 check_registry_skill_updates（一次 clone 覆盖全部注册表条目，
+      // 避免逐 skill N 倍 clone）；其余走既有单条 check_skills_sh_update。
+      if (isRegistrySource(source.sourceUrl, settings.skillRegistryUrl)) {
+        registryTrackedSkills.push(skill);
+        continue;
+      }
       setSkillUpdateChecks((current) => {
         if (current[skill.id]) return current;
         return { ...current, [skill.id]: { status: "checking" } };
@@ -592,6 +604,28 @@ export default function App() {
         }));
       }
     }
+    if (registryTrackedSkills.length === 0) return;
+    try {
+      const updates = await callApi<RegistrySkillUpdate[]>("check_registry_skill_updates");
+      const updateBySlug = new Map(updates.map((entry) => [entry.slug, entry]));
+      for (const skill of registryTrackedSkills) {
+        const update = updateBySlug.get(skill.slug);
+        if (!update) continue;
+        setSkillUpdateChecks((current) => ({
+          ...current,
+          [skill.id]: update.updateAvailable
+            ? { status: "available", message: update.remoteVersion ? `远程有新版本 ${update.remoteVersion}` : undefined }
+            : { status: "current" }
+        }));
+      }
+    } catch (reason) {
+      for (const skill of registryTrackedSkills) {
+        setSkillUpdateChecks((current) => ({
+          ...current,
+          [skill.id]: failedUpdateCheck(reason)
+        }));
+      }
+    }
   }
 
   async function updateSkillsShSkill(skill: SkillRecord) {
@@ -601,13 +635,21 @@ export default function App() {
     setError(null);
     setUpdatingSkillIds((current) => new Set(current).add(skill.id));
     try {
-      const result = await callApi<SkillUpdateCheck>("update_skills_sh_skill", {
-        slug: skill.slug,
-        entryPath: source.installation.entryPath,
-        sourceUrl: source.sourceUrl,
-        skillPath: source.lock.skillPath ?? null
-      });
-      setSkillUpdateChecks((current) => ({ ...current, [skill.id]: result }));
+      // 执行分流（DD §8.5）：registry 来源走 update_registry_skill——既有
+      // update_skills_sh_skill 有 is_agents_skill_path 守卫，中心库路径必拒；
+      // 其余来源维持既有 command。
+      if (isRegistrySource(source.sourceUrl, settings.skillRegistryUrl)) {
+        await callApi<void>("update_registry_skill", { slug: skill.slug });
+        setSkillUpdateChecks((current) => ({ ...current, [skill.id]: { status: "current" } }));
+      } else {
+        const result = await callApi<SkillUpdateCheck>("update_skills_sh_skill", {
+          slug: skill.slug,
+          entryPath: source.installation.entryPath,
+          sourceUrl: source.sourceUrl,
+          skillPath: source.lock.skillPath ?? null
+        });
+        setSkillUpdateChecks((current) => ({ ...current, [skill.id]: result }));
+      }
       await refreshInventory();
     } catch (reason) {
       setError(String(reason));

@@ -261,10 +261,60 @@ export function skillSourceSummary(skill: SkillRecord, skillLocks: Record<string
 
 export function skillsShUpdateSource(skill: SkillRecord, skillLocks: Record<string, SkillLockEntry>) {
   const lock = skillsShLock(skill, skillLocks);
-  const installation = lock ? skillsShInstallationCandidate(skill) : null;
   const sourceUrl = lock?.sourceUrl || lock?.source;
-  if (!installation || !lock || !sourceUrl) return null;
+  if (!lock || !sourceUrl) return null;
+
+  // 兜底（DD §8.5 门-B6）：中心库安装（canonicalStatus=="imported"）无
+  // `.agents/skills` 候选时，以中心库路径作 entryPath，让更新触发链覆盖
+  // 注册表下载的 skill；仅当存在非中心库引用的 `.agents/skills` 实目录时
+  // 沿用旧候选（其 entryPath 才是真实安装位置）。
+  const installation = skillsShInstallationCandidate(skill)
+    ?? (skill.canonicalStatus === "imported" && skill.canonicalPath
+      ? { entryPath: skill.canonicalPath } as SkillInstallation
+      : null);
+  if (!installation) return null;
   return { installation, lock, sourceUrl };
+}
+
+/**
+ * 更新分流判定（DD §8.5）：lock.sourceUrl 双侧归一化相等 == settings.skillRegistryUrl
+ * → 走 check_registry_skill_updates / update_registry_skill；其余走既有
+ * check_skills_sh_update / update_skills_sh_skill。镜像后端
+ * normalize_github_url 的形态（https://github.com/{owner}/{repo}.git）。
+ */
+export function isRegistrySource(sourceUrl: string | undefined, registryUrl: string | undefined) {
+  if (!sourceUrl || !registryUrl) return false;
+  const left = normalizeGithubUrl(sourceUrl);
+  const right = normalizeGithubUrl(registryUrl);
+  return left !== null && right !== null && left === right;
+}
+
+/**
+ * 已安装 skill 是否由当前 skill 注册表跟踪（registry 来源徽标用）：
+ * lock 命中且来源归一化 == settings.skillRegistryUrl。
+ */
+export function isRegistryTracked(skill: SkillRecord, skillLocks: Record<string, SkillLockEntry>, registryUrl?: string) {
+  const lock = skillsShLock(skill, skillLocks);
+  if (!lock) return false;
+  return isRegistrySource(lock.sourceUrl || lock.source, registryUrl);
+}
+
+function normalizeGithubUrl(sourceUrl: string): string | null {
+  const trimmed = sourceUrl.trim().replace(/\/+$/, "").replace(/\.git$/, "");
+  let path: string | null = null;
+  if (trimmed.startsWith("git@github.com:")) {
+    path = trimmed.slice("git@github.com:".length);
+  } else if (trimmed.startsWith("github.com/")) {
+    path = trimmed.slice("github.com/".length);
+  } else if (trimmed.startsWith("https://github.com/")) {
+    path = trimmed.slice("https://github.com/".length);
+  } else if (/^[^/]+\/[^/]+$/.test(trimmed)) {
+    path = trimmed;
+  }
+  if (path === null) return null;
+  const segments = path.split("/");
+  if (segments.length !== 2 || segments.some((segment) => segment.length === 0)) return null;
+  return `https://github.com/${path}.git`;
 }
 
 export function centralLibraryReferenceSummary(skill: SkillRecord) {
