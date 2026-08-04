@@ -76,7 +76,8 @@ export function WorkflowsView({
     // 仅首挂载加载一次；后续刷新走 toolbar 与远程区的刷新按钮。
     void refreshInstalled();
     void refreshRemote(false);
-    void refreshUpdateStates(true);
+    // 只读模式（DD §8.5）：check_workflow_updates 不在白名单（403），跳过。
+    if (!readonly) void refreshUpdateStates(true);
   }, []);
 
   useEffect(() => {
