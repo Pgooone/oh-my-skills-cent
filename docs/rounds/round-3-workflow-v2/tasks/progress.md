@@ -42,15 +42,16 @@
 
 ## 批次 7 · 收口
 
-- [ ] C11 e2e-acceptance（双层验收；W4/W5 端到端 verify 在本卡）
+- [x] C11 e2e-acceptance（双层验收；W4/W5 端到端 verify 在本卡）（逻辑层 verifier sonnet 全绿 + 红线 4 条确认；端到端 lead 真浏览器/真仓库全绿；期间修真 bug：只读首挂载 403 → 23f55ce）
 
 ## 最终验收（proposal §6，判据纪律见 docs/acceptance-standards.md）
 
-- [ ] AC1 导出/导入闭环（真浏览器 + 逐字节 diff）
-- [ ] AC2 一键推送（ls-remote hash 独立核实 + token 脱敏负向）
-- [ ] AC3 一键贡献（三态：noToken/needFork/ready）
-- [ ] AC4 更新检查三态
-- [ ] AC5 只读模式（拒启动/写 403/浏览 200/pageErrors=0/限流触发/访客上传出 PR）
-- [ ] AC6 skill 注册表全链路（byte-verbatim + W4 端到端）
-- [ ] AC7 三门禁全绿（lead 复跑）
-- [ ] 卫生：测试写入还原、服务按端口/PID 杀、探针即删
+- [x] AC1 导出/导入闭环（真浏览器导出胖包→干净环境导入→详情完整+徽标最新；胖包含全部 3 skill 自包含）
+- [x] AC2 一键推送（真仓库 scratch：返回 hash b27758cb 与 ls-remote 全等；clone 校验 index 8 字段+包目录逐字段）
+- [x] AC3 一键贡献（status=ready + compare URL 预填完整 + fork 侧 ls-remote 核实 contrib 分支存在）
+- [x] AC4 更新检查三态（真 UI：upToDate→编辑→「已修改」徽标；有更新→备份 单测+逻辑层已断言）
+- [x] AC5 只读模式（D4 拒启动+原因 / health readonly / PublicSettings 无 token / 写命令 403 / route_layer 顺序判据命中 guard / UI 横幅+写按钮不渲染 / pageErrors=0）
+- [x] AC6 skill 注册表全链路（下载 tdd→lock 五字段归一化→下载完成立即 check 返回 current（byte-verbatim）→W4 触发链真发起+徽标）
+- [x] AC7 三门禁全绿（cargo 默认 171/web 232+6/tsc/build/vitest 10，lead 复跑）；真浏览器全程 pageErrors=0
+- [x] 卫生：codex 产物清理+卸载、官方注册表 contrib 测试分支已删（ls-remote 核实）、临时 data_dir 全清、8477 已释放
+- [x] codex 下载验证（新增）：中心库 tdd 经 oms-web 同步至 ~/.codex/skills 物化成功；工作流物化机制验证（暴露 L3 来源冲突属预期）；已记录并清理全部 codex 文件+卸载 codexcli+删 ~/.codex
