@@ -9,6 +9,7 @@ import type { AgentRecord, ContributeOutcome, ProjectWorkspaceCandidate, RemoteS
 import type { SkillWorkspace } from "../uiTypes";
 
 export function SkillsView({
+  readonly,
   agents,
   skills,
   allSkills,
@@ -48,6 +49,8 @@ export function SkillsView({
   onLinkDiscoveredProject,
   onRemoveProject
 }: {
+  /** 只读模式（DD §8.5）：隐藏写入口与目录浏览，更新徽标降级为只读展示。 */
+  readonly: boolean;
   agents: AgentRecord[];
   skills: SkillRecord[];
   allSkills: SkillRecord[];
@@ -196,14 +199,16 @@ export function SkillsView({
 
           <div className="skills-toolbar-actions">
             {isProjectWorkspace ? (
-              <div className="project-toolbar-actions">
-                <button className="project-toolbar-action" onClick={onAddProject} type="button">
-                  关联项目
-                </button>
-                <button className="project-toolbar-action" onClick={onDiscoverProjects} type="button">
-                  扫描发现
-                </button>
-              </div>
+              readonly ? null : (
+                <div className="project-toolbar-actions">
+                  <button className="project-toolbar-action" onClick={onAddProject} type="button">
+                    关联项目
+                  </button>
+                  <button className="project-toolbar-action" onClick={onDiscoverProjects} type="button">
+                    扫描发现
+                  </button>
+                </div>
+              )
             ) : (
               <>
                 {searchOpen && (
@@ -356,17 +361,19 @@ export function SkillsView({
                       <small>{folder}</small>
                     </span>
                     <em>{stats.skillCount} Skills</em>
-                    <span
-                      aria-hidden="true"
-                      className="project-chip-close"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRemoveProject(folder);
-                      }}
-                      title="取消关联"
-                    >
-                      <XCircle size={15} />
-                    </span>
+                    {!readonly && (
+                      <span
+                        aria-hidden="true"
+                        className="project-chip-close"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRemoveProject(folder);
+                        }}
+                        title="取消关联"
+                      >
+                        <XCircle size={15} />
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -399,6 +406,7 @@ export function SkillsView({
                 return (
                   <Fragment key={skill.id}>
                     <SkillRow
+                      readonly={readonly}
                       skill={skill}
                       agents={agents}
                       skillLocks={skillLocks}
@@ -414,12 +422,13 @@ export function SkillsView({
                     />
                     {expanded && (
                       <SkillDetail
+                        readonly={readonly}
                         skill={skill}
                         settings={settings}
                         skillLocks={skillLocks}
                         workspace={workspace}
                         removing={removing}
-                        onRemovePath={onRemovePaths}
+                        onRemovePath={readonly ? undefined : onRemovePaths}
                       />
                     )}
                   </Fragment>
@@ -442,17 +451,22 @@ export function SkillsView({
         )}
 
         {isProjectNoWorkspace && !(discovering || discoveryBasePath || discoveredProjects.length > 0) && (
-          <ProjectWorkspaceEmptyState onAddProject={onAddProject} onDiscoverProjects={onDiscoverProjects} />
+          <ProjectWorkspaceEmptyState
+            readonly={readonly}
+            onAddProject={onAddProject}
+            onDiscoverProjects={onDiscoverProjects}
+          />
         )}
       </section>
 
       <SkillRegistrySection
+        readonly={readonly}
         realBackend={hasRealBackend()}
         registryUrl={settings.skillRegistryUrl}
         onRefresh={onRefresh}
       />
 
-      {selectedCount > 0 && (
+      {selectedCount > 0 && !readonly && (
         <div className="selection-action-bar" role="region" aria-label="已选 Skills 操作">
           <div className="selection-summary">
             <div className="selection-names">
@@ -540,9 +554,11 @@ function SkillsListEmptyState({
 }
 
 function ProjectWorkspaceEmptyState({
+  readonly,
   onAddProject,
   onDiscoverProjects
 }: {
+  readonly: boolean;
   onAddProject: () => void;
   onDiscoverProjects: () => void;
 }) {
@@ -552,32 +568,39 @@ function ProjectWorkspaceEmptyState({
 
       <div className="agent-empty-copy project-empty-copy">
         <strong>尚未关联项目工作区</strong>
-        <span>关联项目根目录后，这里会显示该项目内各 Agent 生效的 Skills。</span>
+        <span>
+          {readonly
+            ? "只读模式：内容来自注册表，无法关联本机项目。"
+            : "关联项目根目录后，这里会显示该项目内各 Agent 生效的 Skills。"}
+        </span>
       </div>
 
-      <div className="empty-actions project-empty-actions">
-        <button
-          className="agent-empty-button"
-          onClick={onAddProject}
-          title="手动选择一个包含 Skills 的项目目录"
-          type="button"
-        >
-          <span>关联项目</span>
-        </button>
-        <button
-          className="secondary-button"
-          onClick={onDiscoverProjects}
-          title="从上级目录自动查找一个或多个包含 Skills 的项目"
-          type="button"
-        >
-          扫描发现
-        </button>
-      </div>
+      {!readonly && (
+        <div className="empty-actions project-empty-actions">
+          <button
+            className="agent-empty-button"
+            onClick={onAddProject}
+            title="手动选择一个包含 Skills 的项目目录"
+            type="button"
+          >
+            <span>关联项目</span>
+          </button>
+          <button
+            className="secondary-button"
+            onClick={onDiscoverProjects}
+            title="从上级目录自动查找一个或多个包含 Skills 的项目"
+            type="button"
+          >
+            扫描发现
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
 function SkillRow({
+  readonly,
   skill,
   agents,
   skillLocks,
@@ -591,6 +614,7 @@ function SkillRow({
   onToggle,
   onUpdate
 }: {
+  readonly: boolean;
   skill: SkillRecord;
   agents: AgentRecord[];
   skillLocks: Record<string, SkillLockEntry>;
@@ -606,21 +630,23 @@ function SkillRow({
 }) {
   return (
     <article className={`skill-row ${active ? "active" : ""}`} onClick={onSelect}>
-      <label
-        className={`select-checkbox ${checked ? "checked" : ""}`}
-        onClick={(event) => {
-          event.stopPropagation();
-        }}
-        title="选择同步"
-      >
-        <input
-          aria-label={`选择同步 ${skill.displayName}`}
-          checked={checked}
-          onChange={onToggle}
-          type="checkbox"
-        />
-        <span>{checked && <Check size={14} />}</span>
-      </label>
+      {!readonly && (
+        <label
+          className={`select-checkbox ${checked ? "checked" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+          title="选择同步"
+        >
+          <input
+            aria-label={`选择同步 ${skill.displayName}`}
+            checked={checked}
+            onChange={onToggle}
+            type="checkbox"
+          />
+          <span>{checked && <Check size={14} />}</span>
+        </label>
+      )}
       <button className="skill-row-main" onClick={onSelect} type="button">
         <strong>
           <span className="skill-name-text">{skill.displayName}</span>
@@ -636,6 +662,7 @@ function SkillRow({
         ? <SkillReferenceCell skill={skill} />
         : <SkillAgentStack skill={skill} agents={agents} />}
       <SkillStatusCell
+        readonly={readonly}
         skill={skill}
         skillLocks={skillLocks}
         updateCheck={updateCheck}
@@ -647,12 +674,14 @@ function SkillRow({
 }
 
 function SkillStatusCell({
+  readonly,
   skill,
   skillLocks,
   updateCheck,
   updating,
   onUpdate
 }: {
+  readonly: boolean;
   skill: SkillRecord;
   skillLocks: Record<string, SkillLockEntry>;
   updateCheck?: SkillUpdateCheck;
@@ -663,6 +692,14 @@ function SkillStatusCell({
   const title = updateCheck?.message ?? status.title;
 
   if (status.kind === "update") {
+    // 只读模式（DD §8.5）：更新执行不可达，徽标降级为只读展示。
+    if (readonly) {
+      return (
+        <span className={`skill-status-badge ${status.kind}`} title={title}>
+          {status.label}
+        </span>
+      );
+    }
     return (
       <button
         className={`skill-status-badge ${status.kind}`}
@@ -736,6 +773,7 @@ function SkillReferenceCell({ skill }: { skill: SkillRecord }) {
 }
 
 function SkillDetail({
+  readonly,
   skill,
   settings,
   skillLocks,
@@ -743,6 +781,7 @@ function SkillDetail({
   removing,
   onRemovePath
 }: {
+  readonly: boolean;
   skill: SkillRecord;
   settings: AppSettings;
   skillLocks: Record<string, SkillLockEntry>;
@@ -759,6 +798,7 @@ function SkillDetail({
       {pathSections.map((section) => (
         <DetailField label={section.label} key={section.label}>
           <PathList
+            readonly={readonly}
             paths={section.paths}
             showRawPaths={settings.showRawPaths}
             canRemove={Boolean(onRemovePath) && removableLabels.has(section.label)}
@@ -860,12 +900,15 @@ function uniqueInstallationPaths(installations: SkillRecord["installations"]) {
 }
 
 function PathList({
+  readonly,
   paths,
   showRawPaths,
   canRemove = false,
   removing = false,
   onRemovePath
 }: {
+  /** 只读模式（DD §8.5）：目录浏览入口不可达。 */
+  readonly: boolean;
   paths: DetailPath[];
   showRawPaths: boolean;
   canRemove?: boolean;
@@ -877,17 +920,19 @@ function PathList({
       {paths.map((item) => (
         <div className="detail-path-row" key={item.id}>
           <code title={item.path}>{showRawPaths ? item.path : compactPath(item.path)}</code>
-          <button
-            className="meta-icon-button"
-            onClick={(event) => {
-              event.stopPropagation();
-              revealPath(item.path);
-            }}
-            title="打开路径（不存在或断链时打开上一级）"
-            type="button"
-          >
-            <FolderOpen size={15} />
-          </button>
+          {!readonly && (
+            <button
+              className="meta-icon-button"
+              onClick={(event) => {
+                event.stopPropagation();
+                revealPath(item.path);
+              }}
+              title="打开路径（不存在或断链时打开上一级）"
+              type="button"
+            >
+              <FolderOpen size={15} />
+            </button>
+          )}
           {canRemove && onRemovePath && (
             <button
               className="meta-icon-button danger"
@@ -924,10 +969,12 @@ const skillRemoteBoardStyle = { "--skill-table-columns": "minmax(260px, 1fr) 180
  * 贡献（contribute_skill）+ 来源标签。数据自管（经 callApi）；演示模式只给空态。
  */
 function SkillRegistrySection({
+  readonly,
   realBackend,
   registryUrl,
   onRefresh
 }: {
+  readonly: boolean;
   realBackend: boolean;
   registryUrl?: string;
   onRefresh: () => void;
@@ -1048,6 +1095,7 @@ function SkillRegistrySection({
               busy={Boolean(busy)}
               item={item}
               key={item.path}
+              readonly={readonly}
               onContribute={() => void contribute(item)}
               onDownload={() => void download(item)}
             />
@@ -1099,11 +1147,13 @@ function SkillRegistrySection({
 function SkillRemoteRow({
   item,
   busy,
+  readonly,
   onContribute,
   onDownload
 }: {
   item: RemoteSkillSummary;
   busy: boolean;
+  readonly: boolean;
   onContribute: () => void;
   onDownload: () => void;
 }) {
@@ -1124,7 +1174,14 @@ function SkillRemoteRow({
         <span>v{item.version}</span>
         <small>{item.author ?? item.slug}</small>
       </div>
-      {item.installed ? (
+      {readonly ? (
+        <span
+          className={`skill-status-badge ${item.installed ? "ok" : "check"}`}
+          title="只读模式：可浏览，安装/贡献请连接本地后端"
+        >
+          {item.installed ? "已安装" : "可下载"}
+        </span>
+      ) : item.installed ? (
         <button
           className="secondary-button compact"
           disabled={busy}

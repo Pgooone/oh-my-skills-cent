@@ -2,7 +2,7 @@ import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { DirPicker } from "../components/DirPicker";
-import { callApi } from "./api";
+import { callApi, isReadonly } from "./api";
 import { isTauriRuntime } from "./runtime";
 
 /**
@@ -11,6 +11,8 @@ import { isTauriRuntime } from "./runtime";
  */
 
 export async function pickDirectory(title: string): Promise<string | null> {
+  // 只读模式（DD §8.5）：目录浏览入口整体不可达（list_dir 不在只读白名单）。
+  if (isReadonly()) return null;
   if (isTauriRuntime()) {
     const selected = await open({ directory: true, multiple: false, title });
     return typeof selected === "string" ? selected : null;

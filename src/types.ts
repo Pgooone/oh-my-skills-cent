@@ -348,6 +348,13 @@ export type ContributeOutcome =
   | { status: "needFork"; forkPageUrl: string }
   | { status: "ready"; compareUrl: string; branch: string };
 
+/** contribute_upload 的返回体（ContributeUploadResponse serde camelCase；prUrl/branchUrl 二选一，失败降级带 note）。 */
+export type ContributeUploadResponse = {
+  prUrl?: string;
+  branchUrl?: string;
+  note?: string;
+};
+
 // ===== skill 注册表（round-3，镜像 src-tauri skill_registry.rs / workflow_push.rs）=====
 
 /** list_remote_skills 的返回体（RemoteSkillSummary serde camelCase）。 */

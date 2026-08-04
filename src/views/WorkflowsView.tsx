@@ -10,6 +10,7 @@ import type {
   AgentRecord,
   ApplyResult,
   ContributeOutcome,
+  ContributeUploadResponse,
   ExportPackage,
   ImportResult,
   InstalledWorkflow,
@@ -34,12 +35,14 @@ const DEFAULT_REGISTRY_LABEL = "Pgooone/oh-my-skills-workflows";
  * 数据自管（经 callApi），视觉复用 SkillsView 的列表语言；演示模式只给空态。
  */
 export function WorkflowsView({
+  readonly,
   agents,
   librarySkills,
   skillLocks,
   settings,
   onRequestScan
 }: {
+  readonly: boolean;
   agents: AgentRecord[];
   librarySkills: SkillRecord[];
   skillLocks: Record<string, SkillLockEntry>;
@@ -273,6 +276,32 @@ export function WorkflowsView({
     }
   }
 
+  /** 只读模式的上传贡献（DD §8.3）：zip 分享包 → contribute_upload，提示 prUrl / branchUrl。 */
+  async function handleContributeUpload(file: File) {
+    setBusy(`上传贡献 ${file.name}`);
+    setError(null);
+    try {
+      const archiveBase64 = await readFileAsBase64(file);
+      const result = await callApi<ContributeUploadResponse>("contribute_upload", {
+        kind: "workflow",
+        archiveBase64
+      });
+      if (result.prUrl) {
+        openUrl(result.prUrl);
+        setToast("贡献已提交：PR 已创建，请等待维护者审核");
+      } else if (result.branchUrl) {
+        openUrl(result.branchUrl);
+        setToast(result.note ?? "贡献分支已推送，请在该页面手动创建 PR");
+      } else {
+        setToast("贡献已提交");
+      }
+    } catch (reason) {
+      setError(reasonMessage(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function openDetail(slug: string) {
     if (selectedSlug === slug) {
       detailRunRef.current += 1;
@@ -424,24 +453,40 @@ export function WorkflowsView({
             />
           </div>
           <div className="skills-toolbar-actions">
-            <button
-              className="project-toolbar-action"
-              onClick={() => setEditorState({ initial: null })}
-              type="button"
-            >
-              新建工作流
-            </button>
-            <button
-              className="project-toolbar-action"
-              disabled={checkingUpdates}
-              onClick={() => void checkAllUpdates()}
-              type="button"
-            >
-              {checkingUpdates ? "检查中…" : "检查全部更新"}
-            </button>
-            <button className="project-toolbar-action" onClick={pickImportFile} type="button">
-              导入分享包
-            </button>
+            {readonly ? (
+              <button
+                className="project-toolbar-action"
+                onClick={pickImportFile}
+                title="选择 zip 分享包上传到官方注册表"
+                type="button"
+              >
+                <Upload size={14} />
+                上传贡献
+              </button>
+            ) : (
+              <button
+                className="project-toolbar-action"
+                onClick={() => setEditorState({ initial: null })}
+                type="button"
+              >
+                新建工作流
+              </button>
+            )}
+            {!readonly && (
+              <button
+                className="project-toolbar-action"
+                disabled={checkingUpdates}
+                onClick={() => void checkAllUpdates()}
+                type="button"
+              >
+                {checkingUpdates ? "检查中…" : "检查全部更新"}
+              </button>
+            )}
+            {!readonly && (
+              <button className="project-toolbar-action" onClick={pickImportFile} type="button">
+                导入分享包
+              </button>
+            )}
             <button
               className="icon-button plain"
               onClick={() => {
@@ -457,7 +502,10 @@ export function WorkflowsView({
               accept=".zip,application/zip"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (file) void handleImportFile(file);
+                if (file) {
+                  if (readonly) void handleContributeUpload(file);
+                  else void handleImportFile(file);
+                }
                 event.target.value = "";
               }}
               ref={importInputRef}
@@ -504,6 +552,7 @@ export function WorkflowsView({
                       </div>
                     ) : (
                       <WorkflowDetailPanel
+                        readonly={readonly}
                         busy={Boolean(busy)}
                         onCheckUpdate={() => void checkUpdate(item)}
                         onDelete={() => void remove(item)}
@@ -567,6 +616,7 @@ export function WorkflowsView({
                 busy={Boolean(busy)}
                 item={item}
                 key={item.path}
+                readonly={readonly}
                 onContribute={() => void contribute(item)}
                 onDownload={() => void download(item)}
               />
@@ -710,11 +760,13 @@ function UpdateBadge({ status }: { status: WorkflowUpdateStatus }) {
 function RemoteRow({
   item,
   busy,
+  readonly,
   onContribute,
   onDownload
 }: {
   item: RemoteWorkflowSummary;
   busy: boolean;
+  readonly: boolean;
   onContribute: () => void;
   onDownload: () => void;
 }) {
@@ -735,7 +787,14 @@ function RemoteRow({
         <span>v{item.version}</span>
         <small>{item.author ?? item.slug}</small>
       </div>
-      {item.installed ? (
+      {readonly ? (
+        <span
+          className={`skill-status-badge ${item.installed ? "ok" : "check"}`}
+          title="只读模式：可浏览与导出，安装/贡献请连接本地后端"
+        >
+          {item.installed ? "已安装" : "可下载"}
+        </span>
+      ) : item.installed ? (
         <button
           className="secondary-button compact"
           disabled={busy}

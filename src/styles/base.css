@@ -240,6 +240,11 @@ p {
   color: #8a4b00;
 }
 
+.banner.readonly {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
 .toast {
   position: fixed;
   left: 50%;

@@ -7,6 +7,7 @@ import type { StepSkillStatus, Workflow, WorkflowDetailStep } from "../../types"
  * 复用 SkillsView 的 skill-detail / detail-field 视觉，不新增样式。
  */
 export function WorkflowDetailPanel({
+  readonly,
   workflow,
   steps,
   busy,
@@ -17,6 +18,8 @@ export function WorkflowDetailPanel({
   onExport,
   onCheckUpdate
 }: {
+  /** 只读模式：隐藏写入口，仅保留导出（export_workflow_package 在只读白名单）。 */
+  readonly: boolean;
   workflow: Workflow;
   /** 与 workflow.steps 对齐的归一化视图（含每 skill 状态）。 */
   steps: WorkflowDetailStep[];
@@ -37,52 +40,69 @@ export function WorkflowDetailPanel({
   return (
     <div className="skill-detail">
       <DetailField label="操作">
-        <div className="button-pair">
-          <button className="primary-button" disabled={busy} onClick={onUse} type="button">
-            <Play size={15} />
-            使用工作流
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={onEdit} type="button">
-            <Pencil size={15} />
-            编辑
-          </button>
-          <button className="secondary-button" disabled={busy} onClick={onDelete} type="button">
-            <Trash2 size={15} />
-            删除
-          </button>
-        </div>
-        <div className="button-pair">
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={onPush}
-            title="推送到注册表仓库"
-            type="button"
-          >
-            <Upload size={15} />
-            推送
-          </button>
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={onExport}
-            title="导出分享包（含引用的 Skill）"
-            type="button"
-          >
-            <Package size={15} />
-            导出
-          </button>
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={onCheckUpdate}
-            title="检查注册表是否有新版本"
-            type="button"
-          >
-            <RefreshCw size={15} />
-            检查更新
-          </button>
-        </div>
+        {readonly ? (
+          <div className="button-pair">
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={onExport}
+              title="导出分享包（含引用的 Skill）"
+              type="button"
+            >
+              <Package size={15} />
+              导出
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="button-pair">
+              <button className="primary-button" disabled={busy} onClick={onUse} type="button">
+                <Play size={15} />
+                使用工作流
+              </button>
+              <button className="secondary-button" disabled={busy} onClick={onEdit} type="button">
+                <Pencil size={15} />
+                编辑
+              </button>
+              <button className="secondary-button" disabled={busy} onClick={onDelete} type="button">
+                <Trash2 size={15} />
+                删除
+              </button>
+            </div>
+            <div className="button-pair">
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={onPush}
+                title="推送到注册表仓库"
+                type="button"
+              >
+                <Upload size={15} />
+                推送
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={onExport}
+                title="导出分享包（含引用的 Skill）"
+                type="button"
+              >
+                <Package size={15} />
+                导出
+              </button>
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={onCheckUpdate}
+                title="检查注册表是否有新版本"
+                type="button"
+              >
+                <RefreshCw size={15} />
+                检查更新
+              </button>
+            </div>
+          </>
+        )}
       </DetailField>
 
       <DetailField label="信息">

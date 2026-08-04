@@ -26,6 +26,7 @@ function registryUrlError(value: string | undefined): string | null {
 const urlErrorStyle = { color: "#b42318", fontSize: 12 } as const;
 
 export function SettingsSheet({
+  readonly,
   settings,
   inventory,
   agents = [],
@@ -33,6 +34,8 @@ export function SettingsSheet({
   onClose,
   onSave
 }: {
+  /** 只读模式（DD §8.5）：隐藏设置保存与添加路径（目录浏览入口）。 */
+  readonly: boolean;
   settings: AppSettings;
   inventory: InventorySnapshot | null;
   agents?: AgentRecord[];
@@ -287,10 +290,12 @@ export function SettingsSheet({
                     <h2>自定义扫描路径</h2>
                     <p>添加额外的 Skills 根目录，用于扫描未内置的 Agent 或自定义位置。</p>
                   </div>
-                  <button className="settings-text-button" onClick={() => void addCustomRoot()} type="button">
-                    <Plus size={14} />
-                    添加路径
-                  </button>
+                  {!readonly && (
+                    <button className="settings-text-button" onClick={() => void addCustomRoot()} type="button">
+                      <Plus size={14} />
+                      添加路径
+                    </button>
+                  )}
                 </div>
 
                 {customRoots.length > 0 ? (
@@ -332,16 +337,18 @@ export function SettingsSheet({
 
         <footer className="sheet-actions">
           <button className="secondary-button" onClick={onClose} type="button">取消</button>
-          <button
-            className="primary-button"
-            onClick={onSave}
-            type="button"
-            disabled={hasRegistryUrlError}
-            title={hasRegistryUrlError ? "请先修正注册表 URL" : undefined}
-          >
-            <Check size={16} />
-            保存
-          </button>
+          {!readonly && (
+            <button
+              className="primary-button"
+              onClick={onSave}
+              type="button"
+              disabled={hasRegistryUrlError}
+              title={hasRegistryUrlError ? "请先修正注册表 URL" : undefined}
+            >
+              <Check size={16} />
+              保存
+            </button>
+          )}
         </footer>
       </aside>
     </div>

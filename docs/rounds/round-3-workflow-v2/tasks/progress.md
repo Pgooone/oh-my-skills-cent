@@ -38,7 +38,7 @@
 
 - [x] C8 frontend-workflows（34cc563；tsc/build 绿；lead 修正：callApi 统一回泛型风格 + 补 await）
 - [x] C9 frontend-skills（含 W4 单元层红→绿）（vitest 基建落地 + W4 红→绿纪律真实（5 failed→10 passed）；tsc/build/vitest 全绿；lead 修正：callApi 统一回泛型风格。**注：实际跑在 DeepSeek（sonnet 标签被路由），lead 按最高强度逐行复核通过**）
-- [ ] C10 frontend-readonly
+- [x] C10 frontend-readonly（tsc/build 绿；DeepSeek 交付；**lead 修 2 处**：只读下「检查全部更新」按钮缺守卫（后端 check 不在白名单必 403）→ 隐藏；SyncView 只读未适配 → Sync tab 显示「不提供同步」）
 
 ## 批次 7 · 收口
 

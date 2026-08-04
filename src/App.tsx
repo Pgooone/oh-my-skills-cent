@@ -1,9 +1,9 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentDiscoveryEmptyState } from "./components/AgentDiscoveryEmptyState";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { TabButton } from "./components/TabButton";
-import { callApi, hasRealBackend, probeRealBackend } from "./lib/api";
+import { callApi, hasRealBackend, isReadonly, probeRealBackend } from "./lib/api";
 import { demoBatchPlan, demoInventory, demoSkillLocks } from "./lib/demoData";
 import { askConfirm, pickDirectory } from "./lib/shell";
 import { aggregateSkillsBySlug, compactPath, failedUpdateCheck, isCentralLibraryReference, isRegistrySource, projectSkillsForFolder, quickMigrationSourcesForSkills, samePath, skillsShUpdateSource, syncSourcesForSkills } from "./lib/skillUtils";
@@ -64,6 +64,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 公共只读模式（DD §8.5 门-F10）：health 探测所得，独立 state，桌面壳恒 false。 */
+  const [readonly, setReadonly] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const [previouslyScanned, setPreviouslyScanned] = useState(false);
   const bootStartedRef = useRef(false);
@@ -177,6 +179,7 @@ export default function App() {
     setBusy("读取上次扫描");
     setError(null);
     await probeRealBackend();
+    setReadonly(isReadonly());
     if (!hasRealBackend()) {
       setSettings(defaultSettings);
       setDraftSettings(defaultSettings);
@@ -231,6 +234,23 @@ export default function App() {
       setHasScanned(true);
       setPreviouslyScanned(true);
       setBusy("");
+      return;
+    }
+    // 只读模式（DD §8.5）：scan_inventory 不在只读白名单（403），刷新 = 重读缓存。
+    if (readonly) {
+      try {
+        const [locks, cached] = await Promise.all([readSkillLocks(), readInventoryCache()]);
+        if (cached) {
+          setSkillLocks(locks);
+          setInventory(cached);
+          setHasScanned(true);
+          setPreviouslyScanned(true);
+        }
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        setBusy("");
+      }
       return;
     }
     try {
@@ -453,6 +473,8 @@ export default function App() {
   }
 
   async function validateProjectWorkspacePath(path: string) {
+    // 只读模式（DD §8.5）：关联项目是写入口，discover_project_workspaces 亦不在白名单（403）。
+    if (readonly) return false;
     if (settings.projectFolders.some((folder) => samePath(folder, path))) return true;
     if (!hasRealBackend()) return true;
 
@@ -486,6 +508,8 @@ export default function App() {
   }
 
   async function discoverProjectWorkspaces() {
+    // 只读模式（DD §8.5）：discover_project_workspaces 不在只读白名单（403）。
+    if (readonly) return;
     const selected = await pickDirectory("扫描发现项目工作区");
     if (typeof selected !== "string") return;
     const runId = discoveryRunRef.current + 1;
@@ -573,7 +597,8 @@ export default function App() {
   }
 
   async function refreshSkillsShUpdateChecks(skills: SkillRecord[], locks: Record<string, SkillLockEntry>) {
-    if (!hasRealBackend() || skills.length === 0) return;
+    // 只读模式（DD §8.5）：check 类 command 不在只读白名单，更新执行亦不可达，整链跳过。
+    if (!hasRealBackend() || readonly || skills.length === 0) return;
     const registryTrackedSkills: SkillRecord[] = [];
     for (const skill of skills) {
       const source = skillsShUpdateSource(skill, locks);
@@ -761,6 +786,13 @@ export default function App() {
 
       </header>
 
+      {readonly && (
+        <div className="banner readonly" role="status">
+          <Info size={17} />
+          <span>公共只读模式：内容来自注册表，可浏览/导出/上传贡献</span>
+        </div>
+      )}
+
       {error && (
         <div className="banner error">
           <AlertTriangle size={17} />
@@ -782,6 +814,7 @@ export default function App() {
           </div>
         ) : view === "skills" ? (
           <SkillsView
+            readonly={readonly}
             agents={installedAgents}
             skills={filteredSkills}
             allSkills={allSkills}
@@ -833,7 +866,12 @@ export default function App() {
           />
         ) : null}
 
-        {view === "sync" && (
+        {view === "sync" && readonly ? (
+          <div className="empty-state">
+            <h2>公共只读模式不提供同步</h2>
+            <p>同步会修改本机 Agent 目录。只读站仅用于浏览 / 导出 / 上传贡献。</p>
+          </div>
+        ) : view === "sync" ? (
           <SyncView
             agents={installedAgents.length ? installedAgents : agents}
             queuedSkills={queuedSkills}
@@ -864,10 +902,11 @@ export default function App() {
             onApply={() => void applyPlan()}
             onGoSkills={() => setView("skills")}
           />
-        )}
+        ) : null}
 
         {view === "workflows" && (
           <WorkflowsView
+            readonly={readonly}
             agents={installedAgents.length ? installedAgents : agents}
             librarySkills={librarySkills}
             skillLocks={skillLocks}
@@ -879,6 +918,7 @@ export default function App() {
 
       {settingsOpen && (
         <SettingsSheet
+          readonly={readonly}
           settings={draftSettings}
           inventory={inventory}
           agents={agents}
